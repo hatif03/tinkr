@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Tinkr",
+  "version": "0.2.1",
+  "description": "Remix live webpages without changing the original site.",
+  "permissions": ["storage", "activeTab", "identity", "tabs", "sidePanel"],
+  "host_permissions": [
+    "http://localhost:8787/*",
+    "http://localhost:3000/*",
+    "https://api.tinkr.com/*",
+    "https://app.tinkr.com/*"
+  ],
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*", "https://app.tinkr.com/*"]
+  },
+  "action": { "default_title": "Open Tinkr" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{
+    "matches": ["http://*/*", "https://*/*"],
+    "js": ["tinkr-config.js", "content.js"],
+    "css": ["content.css"],
+    "run_at": "document_idle"
+  }],
+  "sandbox": { "pages": ["sandbox.html"] },
+  "content_security_policy": { "sandbox": "sandbox allow-scripts; script-src 'self' 'unsafe-eval'; connect-src 'none'" },
+  "web_accessible_resources": [{ "resources": ["sandbox.html", "sandbox.js"], "matches": ["http://*/*", "https://*/*"] }]
+}
