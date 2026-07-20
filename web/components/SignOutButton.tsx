@@ -4,9 +4,8 @@ import { createClient } from "@/lib/supabase/client";
 
 export function SignOutButton() {
   async function signOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    window.location.href = "/login";
+    await createClient().auth.signOut();
+    window.location.assign("/login");
   }
-  return <button style={{ border: 0, borderRadius: 8, padding: "8px 12px", background: "#292a32", color: "#f7f7fa" }} onClick={signOut}>Sign out</button>;
+  return <button className="tk-button" style={{ width: "100%" }} onClick={signOut}>Sign out</button>;
 }

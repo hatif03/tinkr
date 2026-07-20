@@ -6,8 +6,9 @@ Tinkr is a Chrome extension for remixing a live webpage locally. It edits the lo
 
 1. Install the extension from the Chrome Web Store (or load unpacked from this repo in Developer mode).
 2. Visit any `http` or `https` page, click the Tinkr icon to open the **side panel**, then click **Enter Design Mode** — no account required.
-3. Edit locally; changes autosave to your browser.
-4. Click **Sign in to save & collaborate** to sync projects to [Tinkr Cloud](http://localhost:3000) and open your library dashboard.
+3. Use the **floating toolbar** at the bottom of the page for tools (move, shapes, pen, text, Dev Mode `</>`). Properties and styles live in the side panel.
+4. Edit locally; changes autosave to your browser.
+5. Click **Sign in to save & collaborate** to sync projects to [Tinkr Cloud](http://localhost:3000), open the **in-browser editor**, or manage your library dashboard.
 5. Share visual review links and collaborate with live cursors and pinned comments when signed in.
 
 Nothing is published to the source website.
@@ -22,7 +23,10 @@ Extension (Design Mode)  ←→  api.tinkr.com  ←→  Supabase
 
 - **Guest-first:** local editing works without sign-in (Loom-style).
 - **Cloud save:** sign-in syncs patches, sections, tokens, Code Labs, and comments.
-- **Infinite canvas:** the page scroll plane is the canvas; sections, wireframes, and pins overlay on top.
+- **Floating toolbar:** Figma-like tool bar on the page canvas (move/hand/scale, frames, shapes, pen, text, comments, Dev Mode).
+- **Dev Mode:** Inspect CSS, box model, and copy specs from extension or dashboard.
+- **Infinite canvas:** the page scroll plane is the canvas; sections, vectors, wireframes, and pins overlay on top.
+- **Dashboard editor:** `/projects/[id]/edit` for iframe canvas + cloud autosave; `/projects/[id]/present` for prototype preview.
 
 ## Operator setup (one-time)
 
@@ -42,6 +46,7 @@ Create one Supabase project. Apply migrations in order:
 # In Supabase SQL editor, run:
 # supabase/schema.sql (initial bootstrap)
 # supabase/migrations/20260718000000_canvas_meta.sql
+# supabase/migrations/20260720000000_figma_features.sql
 ```
 
 Enable Google OAuth and email magic links. Set redirect URLs to `http://localhost:3000/auth/callback` (and production URLs when deployed).
