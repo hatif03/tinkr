@@ -22,7 +22,7 @@
 
   function applyPatch(patch, documentRef = document) {
     const el = resolvePatchTarget(patch, documentRef);
-    if (!el && patch.type !== "insert_html" && patch.type !== "insert_vector") return false;
+    if (!el && patch.type !== "insert_html" && patch.type !== "insert_vector" && patch.type !== "update_proxy") return false;
     if (patch.type === "set_styles") {
       patch.breakpoint && patch.breakpoint !== "base"
         ? applyBreakpointStyle(el, patch.breakpoint, patch.styles, documentRef)
@@ -36,8 +36,9 @@
       const holder = documentRef.createElement("div");
       holder.innerHTML = patch.html;
       const insert = holder.firstElementChild;
-      const after = documentRef.querySelector(patch.after);
-      (after?.parentElement === parent ? after : parent.lastElementChild)?.after(insert);
+      const after = patch.after ? documentRef.querySelector(patch.after) : null;
+      if (after?.parentElement === parent) after.after(insert);
+      else parent.append(insert);
     }
     if (patch.type === "reorder") {
       const parent = documentRef.querySelector(patch.parent);
@@ -45,6 +46,25 @@
       const before = patch.before ? documentRef.querySelector(patch.before) : null;
       if (before?.parentElement === parent) parent.insertBefore(el, before);
       else parent.append(el);
+    }
+    if (patch.type === "reorder_dom") {
+      const parent = documentRef.querySelector(patch.parent);
+      if (!parent) return false;
+      const before = patch.before ? documentRef.querySelector(patch.before) : null;
+      if (before?.parentElement === parent) parent.insertBefore(el, before);
+      else parent.append(el);
+    }
+    if (patch.type === "move_layer") Object.assign(el.style, patch.after?.styles || patch.styles || {});
+    if (patch.type === "set_layer_order") Object.assign(el.style, patch.after || {});
+    if (patch.type === "create_proxy") {
+      Object.assign(el.style, { opacity: "0", pointerEvents: "none" });
+      el.setAttribute("data-tinkr-proxy-source", patch.proxy?.id || "true");
+    }
+    if (patch.type === "hide_source") Object.assign(el.style, patch.after || { opacity: "0", pointerEvents: "none" });
+    if (patch.type === "restore_source") {
+      if (patch.after?.style === null) el.removeAttribute("style");
+      else if (patch.after?.style) el.setAttribute("style", patch.after.style);
+      el.removeAttribute("data-tinkr-proxy-source");
     }
     return true;
   }
