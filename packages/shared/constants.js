@@ -17,5 +17,8 @@ export const COMPONENT_LIBRARY = {
   testimonial: { label: "Testimonial", category: "marketing" },
   feature: { label: "Feature card", category: "marketing" },
   wireframe: { label: "Wireframe frame", category: "layout" },
-  section: { label: "Section marker", category: "layout" }
+  section: { label: "Section marker", category: "layout" },
+  hero: { label: "Hero block", category: "marketing" },
+  nav: { label: "Nav bar", category: "layout" },
+  card: { label: "Card", category: "components" }
 };

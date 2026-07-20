@@ -23,9 +23,10 @@ async function requireUser(req, res) {
 
 function draftPayload(body) {
   const draft = body?.current_draft ?? body?.patches ?? body?.draft;
-  if (Array.isArray(draft)) return { patches: draft, labs: body?.labs || [], tokens: body?.tokens || {}, sections: body?.sections || [], prototypeLinks: body?.prototypeLinks || [], motion: body?.motion || [] };
-  if (draft && typeof draft === "object") return draft;
-  return { patches: [], labs: [], tokens: {}, sections: [], prototypeLinks: [], motion: [] };
+  const base = { patches: [], labs: [], tokens: {}, sections: [], slices: [], prototypeLinks: [], motion: [], vectorLayers: [], styles: {}, components: [] };
+  if (Array.isArray(draft)) return { ...base, patches: draft, labs: body?.labs || [], tokens: body?.tokens || {} };
+  if (draft && typeof draft === "object") return { ...base, ...draft };
+  return base;
 }
 
 const presenceStore = new Map();
@@ -66,7 +67,7 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data, error } = await auth.client.from("projects").select("id,name,source_url,preview_path,updated_at,created_at").order("updated_at", { ascending: false });
+    const { data, error } = await auth.client.from("projects").select("id,name,source_url,preview_path,updated_at,created_at,starred").order("updated_at", { ascending: false });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ projects: data });
   });
@@ -109,9 +110,29 @@ export function mountCloudRoutes(app) {
     if (req.body?.current_draft !== undefined || req.body?.patches !== undefined || req.body?.draft !== undefined) patch.current_draft = draftPayload(req.body);
     if (req.body?.canvas_meta !== undefined) patch.canvas_meta = req.body.canvas_meta;
     if (req.body?.preview_path) patch.preview_path = req.body.preview_path;
+    if (req.body?.starred !== undefined) patch.starred = Boolean(req.body.starred);
     const { data, error } = await auth.client.from("projects").update(patch).eq("id", req.params.projectId).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ project: data });
+  });
+
+  app.patch("/api/projects/:projectId/star", async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { data, error } = await auth.client.from("projects").update({ starred: Boolean(req.body?.starred), updated_at: new Date().toISOString() }).eq("id", req.params.projectId).select("id,starred").single();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ project: data });
+  });
+
+  app.get("/api/projects/:projectId/dev-spec", async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const selector = String(req.query.selector || "");
+    const { data: project, error } = await auth.client.from("projects").select("current_draft").eq("id", req.params.projectId).single();
+    if (error || !project) return res.status(404).json({ error: "Project not found." });
+    const patches = project.current_draft?.patches || [];
+    const match = patches.filter(p => p.selector === selector || p.target?.selector === selector);
+    res.json({ selector, patches: match, draft: project.current_draft });
   });
 
   app.delete("/api/projects/:projectId", async (req, res) => {
@@ -141,6 +162,7 @@ export function mountCloudRoutes(app) {
       description: req.body?.description || null,
       source_fingerprint: req.body?.fingerprint || {},
       patch_snapshot: draft.patches || draft,
+      draft_snapshot: req.body?.draft_snapshot || draft,
       preview_path: req.body?.previewPath || null
     };
     const { data, error } = await auth.client.from("revisions").insert(row).select().single();
@@ -190,6 +212,7 @@ export function mountCloudRoutes(app) {
     const email = String(req.body?.email || "").trim();
     const role = req.body?.role || "viewer";
     if (!email) return res.status(400).json({ error: "email is required" });
+    let userId = req.body?.userId;
     if (!userId) {
       const listed = await serviceClient().auth.admin.listUsers({ page: 1, perPage: 1000 });
       userId = listed?.data?.users?.find(u => u.email === email)?.id;
@@ -198,6 +221,34 @@ export function mountCloudRoutes(app) {
     const { data, error } = await auth.client.from("project_members").upsert({ project_id: req.params.projectId, user_id: userId, role }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.status(201).json({ member: data });
+  });
+
+  app.get("/api/projects/:projectId/assets", async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { data, error } = await auth.client.from("assets").select("id,storage_path,mime_type,byte_size,created_at").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ assets: data || [] });
+  });
+
+  app.get("/api/projects/:projectId/assets/:assetId/url", async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { data: asset, error } = await auth.client.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
+    if (error || !asset) return res.status(404).json({ error: "Asset not found." });
+    const { data, error: urlError } = await auth.client.storage.from("tinkr-assets").createSignedUrl(asset.storage_path, 3600);
+    if (urlError) return res.status(400).json({ error: urlError.message });
+    res.json({ url: data.signedUrl });
+  });
+
+  app.delete("/api/projects/:projectId/assets/:assetId", async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { data: asset } = await auth.client.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
+    if (asset?.storage_path) await auth.client.storage.from("tinkr-assets").remove([asset.storage_path]);
+    const { error } = await auth.client.from("assets").delete().eq("id", req.params.assetId);
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true });
   });
 
   app.post("/api/projects/:projectId/assets/upload-url", async (req, res) => {
@@ -225,7 +276,7 @@ export function mountCloudRoutes(app) {
   app.get("/api/review/:token", async (req, res) => {
     if (!configured()) return res.status(503).json({ error: "Supabase is not configured." });
     try {
-      const { data: link, error } = await serviceClient().from("share_links").select("id, expires_at, revoked_at, revisions(id, name, description, patch_snapshot, preview_path, created_at, projects(id, name, source_url, preview_path))").eq("token_hash", tokenHash(req.params.token)).maybeSingle();
+      const { data: link, error } = await serviceClient().from("share_links").select("id, expires_at, revoked_at, revisions(id, name, description, patch_snapshot, draft_snapshot, preview_path, created_at, projects(id, name, source_url, preview_path))").eq("token_hash", tokenHash(req.params.token)).maybeSingle();
       if (error || !link || link.revoked_at || (link.expires_at && new Date(link.expires_at) <= new Date())) return res.status(404).json({ error: "This share link is unavailable." });
       res.json({ revision: link.revisions });
     } catch (error) { res.status(503).json({ error: error.message }); }
