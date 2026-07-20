@@ -30,7 +30,10 @@
     vectorMove: svg('<circle cx="12" cy="12" r="2" fill="currentColor"/><path d="M12 5v3M12 16v3M5 12h3M16 12h3"/>', "Move point"),
     vectorBend: svg('<path d="M4 16c4-8 8 8 16-4"/><circle cx="4" cy="16" r="2" fill="currentColor"/><circle cx="20" cy="12" r="2" fill="currentColor"/>', "Bend"),
     vectorClose: svg('<path d="M4 12a8 8 0 1 0 8-8"/><path d="m4 4 4 4-4 4"/>', "Close path"),
-    vectorDelete: svg('<path d="M5 5l14 14M19 5 5 19"/>', "Delete point")
+    vectorDelete: svg('<path d="M5 5l14 14M19 5 5 19"/>', "Delete point"),
+    undo: svg('<path d="M9 7 4 12l5 5"/><path d="M20 12H6"/>', "Undo"),
+    redo: svg('<path d="M15 7l5 5-5 5"/><path d="M4 12h14"/>', "Redo"),
+    trash: svg('<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M8 7l1 12h6l1-12"/>', "Delete")
   };
 
   window.TinkrCanvas = window.TinkrCanvas || {};

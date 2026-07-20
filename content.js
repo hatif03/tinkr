@@ -21,17 +21,19 @@
   };
 
   const state = {
-    active: false, selected: null, hover: null, patches: [], undo: [], clipboard: null, styleClipboard: null,
+    active: false, selected: null, hover: null, patches: [], history: [], future: [], clipboard: null, styleClipboard: null,
     drag: null, root: null, breakpoint: "base", observer: null, settleTimer: null, labs: [], pendingLab: null,
     projectId: null, signedIn: false, cloudSyncTimer: null, sections: [], slices: [], tokens: { ...DEFAULT_TOKENS },
     prototypeLinks: [], motion: [], comments: [], presence: [], panel: "design",
-    viewport: { scale: 1, x: 0, y: 0 }, vectorLayers: [], selectedVectorId: null,
-    styles: JSON.parse(JSON.stringify(DEFAULT_STYLES)), components: [],
+    viewport: { scale: 1, x: 0, y: 0 }, vectorLayers: [], selectedVectorId: null, visualLayers: [], selectedProxyId: null,
+    styles: JSON.parse(JSON.stringify(DEFAULT_STYLES)), components: [], variables: [], assets: [],
     tool: TC()?.createDefaultTool?.() || { group: "move", variant: "select", devMode: false, protoMode: false },
     pinCommentMode: false, originalStyles: new Map(), preview: null, _status: "", labOutput: null, labHasOps: null,
     drawSession: null, panSession: null, scaleSession: null, penNodes: [], penSession: null,
     strokeSession: null, vectorEditMode: "move", timelineOpen: false, presentMode: false,
-    toolbarCleanup: null, spaceHand: false, toolBeforeSpace: null, onPageHide: null, suppressClick: false
+    toolbarCleanup: null, spaceHand: false, toolBeforeSpace: null, onPageHide: null, suppressClick: false,
+    moveMode: "visual", activePointerId: null,
+    skipPersist: false
   };
 
   function toolStatusLabel() {
@@ -78,7 +80,7 @@
   const unsafeTarget = el => /^(IFRAME|CANVAS|VIDEO|AUDIO|EMBED|OBJECT)$/i.test(el?.tagName) || el?.closest("form,[contenteditable='true'],[data-tinkr-protected]");
   function fingerprint(el) { const r = el.getBoundingClientRect(); return { selector: selectorFor(el), tag: el.tagName.toLowerCase(), stable: ["data-testid","name","aria-label","role"].map(k => [k, el.getAttribute(k)]).filter(([,v]) => v), text: (el.innerText || "").trim().slice(0,160), box: [Math.round(r.left),Math.round(r.top),Math.round(r.width),Math.round(r.height)] }; }
   function anchorAt(x, y) { return { scrollX: window.scrollX, scrollY: window.scrollY, x, y, zIndex: nextZ() }; }
-  function nextZ() { return (state._z = (state._z || 1000) + 1); }
+  function nextZ() { return (state._z = Math.max(state._z || 1000, ...state.visualLayers.map(layer => Number(layer.zIndex) || 0)) + 1); }
   function rgbToHex(value) { const m = value?.match(/\d+/g); return m?.length >= 3 ? `#${m.slice(0, 3).map(n => Number(n).toString(16).padStart(2, "0")).join("")}` : "#000000"; }
 
   function cursorState(el) {
@@ -128,8 +130,8 @@
   function createOverlay() {
     const root = document.createElement("div"); root.id = "tinkr-root";
     root.innerHTML = `<div id="tinkr-cursor" class="tinkr-cursor"></div><div id="tinkr-cursor-label" class="tinkr-cursor-label">Inspect</div>
-      <div id="tinkr-overlay" class="tinkr-overlay"></div><div id="tinkr-live-cursors"></div><div id="tinkr-pins"></div>
-      <div class="tinkr-box" id="tinkr-hover"></div><div class="tinkr-box selected tinkr-hide" id="tinkr-selected"></div>`;
+      <div id="tinkr-overlay" class="tinkr-overlay"></div><div id="tinkr-proxy-layer" class="tinkr-proxy-layer"></div><div id="tinkr-live-cursors"></div><div id="tinkr-pins"></div>
+      <div class="tinkr-box" id="tinkr-hover"></div><div class="tinkr-box selected tinkr-hide" id="tinkr-selected"></div><div class="tinkr-box layer-target tinkr-hide" id="tinkr-layer-target"></div><div id="tinkr-insert-indicator" class="tinkr-insert-indicator tinkr-hide"></div>`;
     const sandbox = document.createElement("iframe"); sandbox.src = chrome.runtime.getURL("sandbox.html"); sandbox.style.display = "none"; sandbox.id = "tinkr-sandbox"; root.append(sandbox);
     document.documentElement.append(root); state.root = root;
     const mount = window.TinkrToolbar?.mountToolbar(root, {
@@ -138,9 +140,13 @@
       toggleTimeline: () => { state.timelineOpen = !state.timelineOpen; state.root.querySelector("#tinkr-timeline")?.classList.toggle("tinkr-hide", !state.timelineOpen); renderTimeline(); pushPanelState(); },
       enterPresent: () => { state.presentMode = true; state.tool.protoMode = true; state.panel = "proto"; document.documentElement.requestFullscreen?.(); pushPanelState(); },
       openResources: () => { state.panel = "design"; status("Resources: use + components in side panel or drag from dashboard."); pushPanelState(); },
-      vectorEdit: (action) => runVectorEdit(action)
+      vectorEdit: (action) => runVectorEdit(action),
+      undo, redo, deleteSelected: deleteSelected
     });
     state.toolbarCleanup = mount?.cleanup;
+    const cursor = root.querySelector("#tinkr-cursor");
+    const label = root.querySelector("#tinkr-cursor-label");
+    if (cursor && label) root.append(cursor, label);
     const svg = root.querySelector("#tinkr-vector-layer");
     if (svg) { svg.setAttribute("width", "100%"); svg.setAttribute("height", "100%"); }
   }
@@ -153,6 +159,31 @@
     box.classList.remove("tinkr-hide");
     if (state.tool.variant === "scale" && el === state.selected) renderScaleHandles(r);
     else state.root?.querySelector("#tinkr-scale-handles")?.classList.add("tinkr-hide");
+  }
+
+  function selectedProxy() { return state.visualLayers.find(layer => layer.id === state.selectedProxyId) || null; }
+
+  function proxyElement(id = state.selectedProxyId) { return state.root?.querySelector(`[data-tinkr-proxy-id="${CSS.escape(id || "")}"]`) || null; }
+
+  function placeProxyBox(id, layer = selectedProxy()) {
+    const box = state.root?.querySelector(id); if (!box) return;
+    if (!layer) return box.classList.add("tinkr-hide");
+    Object.assign(box.style, { left: `${layer.x - window.scrollX}px`, top: `${layer.y - window.scrollY}px`, width: `${layer.width}px`, height: `${layer.height}px` });
+    box.classList.remove("tinkr-hide");
+  }
+
+  function copyVisualStyles(source, clone) {
+    const props = ["boxSizing", "display", "position", "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "margin", "padding", "border", "borderRadius", "background", "backgroundColor", "backgroundImage", "backgroundSize", "backgroundPosition", "color", "font", "fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "textAlign", "textTransform", "textDecoration", "whiteSpace", "overflow", "textOverflow", "boxShadow", "opacity", "objectFit", "objectPosition", "filter", "gap", "flex", "flexDirection", "alignItems", "justifyContent"];
+    const apply = (from, to) => { const computed = getComputedStyle(from); props.forEach(prop => { try { to.style[prop] = computed[prop]; } catch { /* unsupported property */ } }); };
+    apply(source, clone);
+    const sourceNodes = source.querySelectorAll("*"); const cloneNodes = clone.querySelectorAll("*");
+    sourceNodes.forEach((node, index) => cloneNodes[index] && apply(node, cloneNodes[index]));
+  }
+
+  function renderVisualLayers() {
+    const host = state.root?.querySelector("#tinkr-proxy-layer"); if (!host) return;
+    host.innerHTML = state.visualLayers.map(layer => `<div class="tinkr-visual-proxy${layer.id === state.selectedProxyId ? " is-selected" : ""}" data-tinkr-proxy-id="${layer.id}" style="left:${layer.x - window.scrollX}px;top:${layer.y - window.scrollY}px;width:${layer.width}px;height:${layer.height}px;z-index:${layer.zIndex}">${layer.html}</div>`).join("");
+    placeProxyBox("#tinkr-selected");
   }
 
   function renderScaleHandles(rect) {
@@ -185,6 +216,38 @@
       return node;
     }
     return null;
+  }
+
+  function eventOnSelected(event, selected = state.selected) {
+    if (!selected) return false;
+    const stack = document.elementsFromPoint?.(event.clientX, event.clientY) || [];
+    return stack.some(node => node === selected || selected.contains(node));
+  }
+
+  function beginLayerDrag(el, event, flow) {
+    const before = snapshot(el);
+    const rect = el.getBoundingClientRect();
+    const drag = {
+      el, before, flow, parent: el.parentElement, originalNext: el.nextElementSibling, selector: selectorFor(el),
+      x: event.clientX, y: event.clientY,
+      grabOffsetX: event.clientX - rect.left,
+      grabOffsetY: event.clientY - rect.top
+    };
+    if (flow) return drag;
+    const prepared = prepareVisualLayer(el);
+    drag.mode = "visual";
+    drag.before = prepared.before;
+    drag.baseTranslate = prepared.translate;
+    drag.startZIndex = prepared.zIndex;
+    return drag;
+  }
+
+  function beginProxyDrag(layer, event) { return { kind: "proxy", layer, before: { ...layer }, x: event.clientX, y: event.clientY }; }
+  function capturePointer(event) { if (event.pointerId == null) return; state.activePointerId = event.pointerId; try { document.documentElement.setPointerCapture(event.pointerId); } catch { /* best effort */ } }
+  function releasePointer(event) { if (event.pointerId != null) { try { document.documentElement.releasePointerCapture(event.pointerId); } catch { /* already released */ } } state.activePointerId = null; }
+
+  function commitLayerDrag(d) {
+    return d;
   }
 
   function getDevOutput() {
@@ -248,22 +311,33 @@
         styles: {
           backgroundColor: rgbToHex(style.backgroundColor), color: rgbToHex(style.color),
           fontSize: parseFloat(style.fontSize) || 0, padding: parseFloat(style.padding) || 0,
-          borderRadius: parseFloat(style.borderRadius) || 0, opacity: parseFloat(style.opacity) || 1
+          borderRadius: parseFloat(style.borderRadius) || 0, opacity: parseFloat(style.opacity) || 1,
+          fontWeight: style.fontWeight, lineHeight: style.lineHeight, letterSpacing: style.letterSpacing,
+          textAlign: style.textAlign, textTransform: style.textTransform, objectFit: style.objectFit,
+          objectPosition: style.objectPosition, filter: style.filter, gap: style.gap
         },
         context: { text: textTarget(el), image: imageTarget(el) }
+      };
+    } else if (selectedProxy()) {
+      const layer = selectedProxy();
+      selection = {
+        tag: "tinkr-proxy", type: "Visual copy", parentDisplay: "Tinkr canvas", crumbs: [],
+        styles: { backgroundColor: "#000000", color: "#ffffff", fontSize: 0, padding: 0, borderRadius: 0, opacity: 1, fontWeight: "", lineHeight: "", letterSpacing: "", textAlign: "", textTransform: "", objectFit: "", objectPosition: "", filter: "", gap: "" },
+        context: { text: false, image: false }, proxy: true, zIndex: layer.zIndex
       };
     }
     return {
       active: state.active, signedIn: state.signedIn, status: state._status, breakpoint: state.breakpoint, panel: state.panel,
       tool: { ...state.tool }, activeToolLabel: toolStatusLabel(), pinCommentMode: state.pinCommentMode || state.tool.group === "comment",
       selection, sections: state.sections, slices: state.slices, tokens: state.tokens,
-      styles: state.styles, vectorLayers: state.vectorLayers, prototypeLinks: state.prototypeLinks,
+      styles: state.styles, vectorLayers: state.vectorLayers, visualLayers: state.visualLayers, components: state.components, variables: state.variables, assets: state.assets, prototypeLinks: state.prototypeLinks,
       motion: state.motion, presence: state.presence.slice(0, 6), preview: state.preview,
       labOutput: state.labOutput, labHasOps: state.labHasOps,
       devOutput: state.tool.devMode ? getDevOutput() : null,
       devSpec: state.tool.devMode ? getDevSpec() : null,
       a11ySnapshot: state.selected ? getA11ySnapshot(state.selected) : null,
-      timelineOpen: state.timelineOpen, viewport: state.viewport
+      timelineOpen: state.timelineOpen, viewport: state.viewport, moveMode: state.moveMode,
+      canUndo: state.history.length > 0, canRedo: state.future.length > 0, editCount: state.history.length
     };
   }
 
@@ -311,14 +385,22 @@
 
   function select(el) {
     if (!el || SKIP.has(el.tagName) || isTinkr(el)) return;
+    state.selectedProxyId = null;
     if (state.tool.devMode) { state.selected = el; placeBox("#tinkr-selected", el); renderDevOverlay(); status(`Inspecting ${el.tagName.toLowerCase()}.`); pushPanelState(); return; }
     state.selected = el; placeBox("#tinkr-selected", el); status(`Selected ${el.tagName.toLowerCase()}.`);
     pushPanelState();
   }
 
+  function selectProxy(id) {
+    const layer = state.visualLayers.find(item => item.id === id); if (!layer) return;
+    state.selected = null; state.selectedVectorId = null; state.selectedProxyId = id;
+    placeBox("#tinkr-hover"); renderVisualLayers(); placeProxyBox("#tinkr-selected", layer);
+    status(`Selected visual copy · z ${layer.zIndex}.`); pushPanelState();
+  }
+
   function selectVector(id) {
     state.selectedVectorId = id;
-    state.selected = null;
+    state.selected = null; state.selectedProxyId = null;
     placeBox("#tinkr-selected");
     const layer = state.vectorLayers.find(v => v.id === id);
     if (layer?.nodes?.length) state.penNodes = [...layer.nodes];
@@ -365,6 +447,7 @@
       const file = input.files?.[0];
       if (!file) return;
       const href = URL.createObjectURL(file);
+      state.assets.push({ id: crypto.randomUUID(), name: file.name, mimeType: file.type, byteSize: file.size, href, createdAt: new Date().toISOString() });
       const layer = TC().createShape("image", window.scrollX + 80, window.scrollY + 80, 240, 160, { href });
       state.vectorLayers.push(layer);
       push({ type: "insert_vector", vector: layer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id); renderVectorLayer(); });
@@ -484,6 +567,7 @@
   }
 
   function contextAction(action, value) {
+    if (["front", "forward", "backward", "back", "above", "below"].includes(action)) { arrangeSelected(action); return; }
     const el = state.selected; if (!el || state.tool.devMode) return;
     if (action === "edit" && value !== undefined) updateText(value);
     if (action === "upper") setStyle("textTransform", "uppercase");
@@ -498,6 +582,36 @@
     if (action === "apply-color-style" && value) { const c = state.styles.colors.find(t => t.id === value); if (c) setStyle("color", c.value); }
     if (action === "extract-tokens") extractTokensFromSelection();
     if (action === "boolean-union" && state.selectedVectorId) booleanOp("union");
+    if (action === "make-component") makeComponentFromSelection();
+    if (action === "visual-copy") createVisualProxy();
+    if (action === "move-visual") { state.moveMode = "visual"; status("Visual canvas mode · drag layers anywhere."); pushPanelState(); }
+    if (action === "move-structural") { state.moveMode = "structural"; status("Structural mode · drag to reorder within the source layout."); pushPanelState(); }
+  }
+
+  function makeComponentFromSelection() {
+    if (!state.selected) return status("Select a layer to make a component.");
+    const el = state.selected.cloneNode(true);
+    el.querySelectorAll("script,iframe,form").forEach(node => node.remove());
+    const component = { id: crypto.randomUUID(), name: (state.selected.getAttribute("aria-label") || state.selected.tagName.toLowerCase()).slice(0, 60), html: el.outerHTML, createdAt: new Date().toISOString() };
+    state.components.push(component);
+    queueSave(); status(`Saved ${component.name} to components.`); pushPanelState();
+  }
+
+  function createVariable(payload) {
+    const name = String(payload?.name || "").trim();
+    const value = String(payload?.value || "").trim();
+    if (!name || !value) return status("Variable needs a name and value.");
+    const variable = { id: crypto.randomUUID(), name: name.replace(/\s+/g, "-"), type: payload?.type || "color", value };
+    state.variables = [...state.variables.filter(v => v.name !== variable.name), variable];
+    queueSave(); status(`Variable ${variable.name} saved.`); pushPanelState();
+  }
+
+  function applyVariable(id) {
+    const variable = state.variables.find(v => v.id === id);
+    if (!variable || !state.selected) return status("Select a layer before applying a variable.");
+    const property = variable.type === "spacing" ? "gap" : variable.type === "radius" ? "borderRadius" : variable.type === "typography" ? "fontSize" : "color";
+    setStyle(property, variable.value);
+    status(`Applied ${variable.name}.`);
   }
 
   function booleanOp(op) {
@@ -515,10 +629,94 @@
   function snapshot(el) { return { style: el.getAttribute("style"), html: el.innerHTML, hidden: el.classList.contains("tinkr-hidden") }; }
   function restore(el, before) { if (before.style === null) el.removeAttribute("style"); else el.setAttribute("style", before.style); el.innerHTML = before.html; el.classList.toggle("tinkr-hidden", before.hidden); placeBox("#tinkr-selected", el); pushPanelState(); }
 
-  function push(patch, inverse) {
+  function translateParts(value) {
+    const parts = String(value || "0px 0px").trim().split(/\s+/).map(part => parseFloat(part) || 0);
+    return { x: parts[0] || 0, y: parts[1] || 0 };
+  }
+
+  function prepareVisualLayer(el) {
+    const computed = getComputedStyle(el);
+    const before = snapshot(el);
+    if (computed.position === "static") el.style.position = "relative";
+    if (!el.style.zIndex || el.style.zIndex === "auto") el.style.zIndex = String(nextZ());
+    return { before, translate: translateParts(el.style.translate), zIndex: Number(el.style.zIndex) || nextZ() };
+  }
+
+  function layerTargetAt(x, y, ignored) {
+    const stack = document.elementsFromPoint?.(x, y) || [];
+    return stack.find(node => node?.nodeType === 1 && !isTinkr(node) && !SKIP.has(node.tagName) && node !== ignored && !ignored?.contains(node)) || null;
+  }
+
+  function showLayerTarget(el) {
+    const box = state.root?.querySelector("#tinkr-layer-target");
+    if (!box) return;
+    if (!el) return box.classList.add("tinkr-hide");
+    const r = el.getBoundingClientRect();
+    Object.assign(box.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    box.classList.remove("tinkr-hide");
+  }
+
+  function arrangeElement(el, direction, target = null) {
+    if (!el) return status("Select a layer first.");
+    const before = snapshot(el);
+    const siblings = [...(el.parentElement?.children || [])].filter(node => node.nodeType === 1 && !isTinkr(node));
+    const zValues = siblings.map(node => Number(getComputedStyle(node).zIndex)).filter(Number.isFinite);
+    const current = Number(getComputedStyle(el).zIndex);
+    if (getComputedStyle(el).position === "static") el.style.position = "relative";
+    let z = Number.isFinite(current) ? current : 0;
+    if (target) z = (Number(getComputedStyle(target).zIndex) || 0) + (direction === "below" ? -1 : 1);
+    else if (direction === "front") z = Math.max(0, ...zValues) + 1;
+    else if (direction === "back") z = Math.min(0, ...zValues) - 1;
+    else if (direction === "forward") z += 1;
+    else if (direction === "backward") z -= 1;
+    el.style.zIndex = String(z);
+    push({ type: "set_layer_order", selector: selectorFor(el), target: fingerprint(el), before: { style: before.style }, after: { position: el.style.position, zIndex: el.style.zIndex } }, () => restore(el, before));
+    status(`Layer moved ${direction === "front" ? "to front" : direction === "back" ? "to back" : direction}.`);
+  }
+
+  function arrangeProxy(layer, direction) {
+    if (!layer) return status("Select a visual copy first.");
+    const before = { ...layer };
+    const zs = state.visualLayers.map(item => Number(item.zIndex) || 0);
+    if (direction === "front") layer.zIndex = Math.max(0, ...zs) + 1;
+    else if (direction === "back") layer.zIndex = Math.min(0, ...zs) - 1;
+    else if (direction === "forward") layer.zIndex += 1;
+    else if (direction === "backward") layer.zIndex -= 1;
+    renderVisualLayers();
+    push({ type: "update_proxy", proxyId: layer.id, before, after: { ...layer } }, () => { Object.assign(layer, before); renderVisualLayers(); pushPanelState(); }, () => { renderVisualLayers(); pushPanelState(); });
+    status(`Visual copy moved ${direction}.`);
+  }
+
+  function arrangeSelected(direction) {
+    const proxy = selectedProxy();
+    if (proxy) return arrangeProxy(proxy, direction);
+    if (!state.selected) return status("Select a layer first.");
+    const target = (direction === "above" || direction === "below") ? state.hover : null;
+    if ((direction === "above" || direction === "below") && (!target || target === state.selected)) return status("Hover a target layer, then choose place above or below.");
+    arrangeElement(state.selected, direction, target);
+  }
+
+  function createVisualProxy() {
+    const source = state.selected; if (!source || state.tool.devMode) return status("Select a visual layer first.");
+    const rect = source.getBoundingClientRect();
+    const clone = sanitizedClone(source); clone.removeAttribute("id"); clone.setAttribute("aria-hidden", "true");
+    clone.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
+    copyVisualStyles(source, clone);
+    const before = snapshot(source);
+    const layer = { id: crypto.randomUUID(), source: fingerprint(source), sourceBefore: before, html: clone.outerHTML, x: Math.round(rect.left + window.scrollX), y: Math.round(rect.top + window.scrollY), width: Math.round(rect.width), height: Math.round(rect.height), zIndex: nextZ(), createdAt: new Date().toISOString() };
+    source.style.opacity = "0"; source.style.pointerEvents = "none";
+    state.visualLayers.push(layer); state.selectedProxyId = layer.id; state.selected = null;
+    renderVisualLayers();
+    push({ type: "create_proxy", selector: selectorFor(source), target: fingerprint(source), proxy: layer }, () => { state.visualLayers = state.visualLayers.filter(item => item.id !== layer.id); restore(source, before); renderVisualLayers(); }, () => { source.style.opacity = "0"; source.style.pointerEvents = "none"; state.visualLayers.push(layer); renderVisualLayers(); });
+    status("Visual copy created · source stays unchanged underneath.");
+  }
+
+  function push(patch, inverse, forward) {
     if (patch.selector) { const el = document.querySelector(patch.selector); if (el) patch.target = fingerprint(el); }
     patch.breakpoint = patch.breakpoint || state.breakpoint;
-    state.patches.push(patch); state.undo.push(inverse);
+    state.patches.push(patch);
+    state.history.push({ patch, inverse, forward: forward || (() => applyPatch(patch)) });
+    state.future = [];
     queueSave();
   }
 
@@ -533,7 +731,7 @@
   function setStyle(property, raw) {
     if (!state.selected || state.tool.devMode) return status(state.tool.devMode ? "Dev Mode is read-only." : "Select an element first.");
     const el = state.selected, before = snapshot(el); let value = raw;
-    if (["fontSize", "padding", "borderRadius"].includes(property) && raw !== "" && !String(raw).includes("px")) value = `${raw}px`;
+    if (["fontSize", "padding", "borderRadius", "lineHeight", "letterSpacing", "gap", "maxWidth", "maxHeight"].includes(property) && raw !== "" && !String(raw).includes("px") && !String(raw).includes("%") && !String(raw).includes("rem")) value = `${raw}px`;
     if (state.breakpoint === "base") el.style[property] = value; else applyBreakpointStyle(el, state.breakpoint, { [property]: value });
     push({ type: "set_styles", selector: selectorFor(el), styles: { [property]: value }, breakpoint: state.breakpoint }, () => restore(el, before));
   }
@@ -541,12 +739,25 @@
   function responsiveKey(el) { let key = el.getAttribute("data-tinkr-anchor"); if (!key) { key = `t${Math.random().toString(36).slice(2,10)}`; el.setAttribute("data-tinkr-anchor", key); } return key; }
   function applyBreakpointStyle(el, breakpoint, styles) { const key = responsiveKey(el), id = `tinkr-responsive-${breakpoint}`, css = [...document.querySelectorAll(`style#${CSS.escape(id)}`)][0] || Object.assign(document.createElement("style"), { id }); if (!css.isConnected) document.head.append(css); css.textContent += `@media(max-width:${breakpoint}px){[data-tinkr-anchor="${key}"]{${Object.entries(styles).map(([k,v]) => `${k.replace(/[A-Z]/g,m=>`-${m.toLowerCase()}`)}:${v}!important`).join(";")}}}`; }
   function updateText(text) { const el = state.selected; if (!el) return; const before = snapshot(el); el.textContent = text; push({ type: "update_text", selector: selectorFor(el), text }, () => restore(el, before)); }
-  function hide() { if (!state.selected || state.tool.devMode) return; const el = state.selected, before = snapshot(el); el.classList.add("tinkr-hidden"); push({ type: "hide", selector: selectorFor(el) }, () => restore(el, before)); state.selected = null; placeBox("#tinkr-selected"); pushPanelState(); }
+  function hide() {
+    if (!state.selected || state.tool.devMode) return status("Select an element to delete.");
+    const el = state.selected, before = snapshot(el);
+    el.classList.add("tinkr-hidden");
+    push(
+      { type: "hide", selector: selectorFor(el) },
+      () => restore(el, before),
+      () => { el.classList.add("tinkr-hidden"); placeBox("#tinkr-selected", el); pushPanelState(); }
+    );
+    state.selected = null;
+    placeBox("#tinkr-selected");
+    pushPanelState();
+    status("Deleted element · Ctrl+Z to undo.");
+  }
 
   function sanitizedClone(el) { const clone = el.cloneNode(true); clone.querySelectorAll("script,iframe,form,style,link").forEach(n => n.remove()); clone.querySelectorAll("*").forEach(n => [...n.attributes].filter(a => a.name.startsWith("on") || a.name === "id").forEach(a => n.removeAttribute(a.name))); return clone; }
-  function duplicate() { if (!state.selected || state.tool.devMode) return; const source = state.selected, clone = sanitizedClone(source); source.after(clone); push({ type: "insert_html", parent: selectorFor(source.parentElement), after: selectorFor(source), html: clone.outerHTML }, () => clone.remove()); select(clone); }
+  function duplicate() { if (!state.selected || state.tool.devMode) return; const source = state.selected, clone = sanitizedClone(source); clone.setAttribute("data-tinkr-owned", "true"); source.after(clone); push({ type: "insert_html", parent: selectorFor(source.parentElement), after: selectorFor(source), html: clone.outerHTML }, () => clone.remove()); select(clone); }
   function copy() { if (!state.selected) return; state.clipboard = sanitizedClone(state.selected).outerHTML; status("Component copied."); }
-  function paste() { if (!state.selected || !state.clipboard || state.tool.devMode) return; const holder = document.createElement("div"); holder.innerHTML = state.clipboard; const clone = holder.firstElementChild; state.selected.after(clone); push({ type: "insert_html", parent: selectorFor(state.selected.parentElement), after: selectorFor(state.selected), html: clone.outerHTML }, () => clone.remove()); select(clone); }
+  function paste() { if (!state.selected || !state.clipboard || state.tool.devMode) return; const holder = document.createElement("div"); holder.innerHTML = state.clipboard; const clone = holder.firstElementChild; clone?.setAttribute("data-tinkr-owned", "true"); state.selected.after(clone); push({ type: "insert_html", parent: selectorFor(state.selected.parentElement), after: selectorFor(state.selected), html: clone.outerHTML }, () => clone.remove()); select(clone); }
 
   function componentHTML(kind) {
     const t = state.tokens;
@@ -559,7 +770,7 @@
     return content[kind];
   }
 
-  function insertComponent(kind) { const anchor = state.selected || document.body; const holder = document.createElement("div"); holder.innerHTML = componentHTML(kind); const el = holder.firstElementChild; anchor.after(el); push({ type: "insert_html", parent: selectorFor(anchor.parentElement), after: selectorFor(anchor), html: el.outerHTML }, () => el.remove()); select(el); }
+  function insertComponent(kind) { const anchor = state.selected || document.body; const holder = document.createElement("div"); holder.innerHTML = componentHTML(kind); const el = holder.firstElementChild; if (!el) return; el.setAttribute("data-tinkr-owned", "true"); if (anchor === document.body) document.body.append(el); else anchor.after(el); push({ type: "insert_html", parent: anchor === document.body ? "body" : selectorFor(anchor.parentElement), after: anchor === document.body ? null : selectorFor(anchor), html: el.outerHTML }, () => el.remove()); select(el); }
 
   function autoLayout(kind) {
     if (!state.selected || state.tool.devMode) return status("Select a container first.");
@@ -571,14 +782,159 @@
     status("Auto layout applied.");
   }
 
-  function undo() { const inverse = state.undo.pop(); if (!inverse) return status("Nothing to undo."); state.patches.pop(); inverse(); status("Undid last change."); queueSave(); }
-  function reset() { while (state.undo.length) state.undo.pop()(); state.patches = []; state.vectorLayers = []; state.selected = null; placeBox("#tinkr-selected"); renderVectorLayer(); status("All local edits reset."); queueSave(); }
+  function undo() {
+    const entry = state.history.pop();
+    if (!entry) return status("Nothing to undo.");
+    state.patches.pop();
+    state.future.push(entry);
+    entry.inverse();
+    state.selected = null;
+    placeBox("#tinkr-selected");
+    renderVectorLayer();
+    status(`Undid change · ${state.history.length} remaining.`);
+    queueSave();
+  }
+
+  function redo() {
+    const entry = state.future.pop();
+    if (!entry) return status("Nothing to redo.");
+    entry.forward();
+    state.patches.push(entry.patch);
+    state.history.push(entry);
+    renderVectorLayer();
+    status(`Redid change · ${state.future.length} to redo.`);
+    queueSave();
+  }
+
+  function deleteSelected() {
+    if (state.tool.devMode) return status("Dev Mode is read-only.");
+    if (selectedProxy()) {
+      const layer = selectedProxy();
+      const source = TC().resolvePatchTarget({ selector: layer.source?.selector, target: layer.source }, document);
+      const sourceBefore = source ? snapshot(source) : null;
+      state.visualLayers = state.visualLayers.filter(item => item.id !== layer.id); state.selectedProxyId = null;
+      if (source && layer.sourceBefore) restore(source, layer.sourceBefore);
+      renderVisualLayers();
+      push({ type: "restore_source", selector: layer.source?.selector, target: layer.source, after: layer.sourceBefore }, () => { if (source && sourceBefore) restore(source, sourceBefore); state.visualLayers.push(layer); renderVisualLayers(); }, () => { state.visualLayers = state.visualLayers.filter(item => item.id !== layer.id); if (source && layer.sourceBefore) restore(source, layer.sourceBefore); renderVisualLayers(); });
+      status("Visual copy removed · source restored."); return;
+    }
+    if (state.selectedVectorId) {
+      const id = state.selectedVectorId;
+      const beforeLayers = [...state.vectorLayers];
+      const afterLayers = state.vectorLayers.filter(v => v.id !== id);
+      state.vectorLayers = afterLayers;
+      state.selectedVectorId = null;
+      state.penNodes = [];
+      state.penSession = null;
+      push(
+        { type: "vector_layers", layers: afterLayers.map(v => v.id) },
+        () => { state.vectorLayers = beforeLayers; renderVectorLayer(); pushPanelState(); },
+        () => { state.vectorLayers = afterLayers; renderVectorLayer(); pushPanelState(); }
+      );
+      renderVectorLayer();
+      pushPanelState();
+      status("Deleted vector layer.");
+      return;
+    }
+    hide();
+  }
+
+  async function clearCloudDraft() {
+    if (!state.projectId) return;
+    try {
+      const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
+      if (!auth?.signedIn) return;
+      await api(`/api/projects/${state.projectId}`, "PATCH", {
+        current_draft: {
+          patches: [], labs: [], sections: [], slices: [], vectorLayers: [], visualLayers: [],
+          prototypeLinks: [], motion: [], components: [],
+          tokens: { ...DEFAULT_TOKENS },
+          styles: JSON.parse(JSON.stringify(DEFAULT_STYLES))
+        },
+        canvas_meta: { sections: [], viewportState: { scale: 1, x: 0, y: 0 } }
+      });
+    } catch { /* API offline */ }
+  }
+
+  function clearCanvasArtifacts() {
+    state.visualLayers.forEach(layer => {
+      const source = TC().resolvePatchTarget({ selector: layer.source?.selector, target: layer.source }, document);
+      if (source && layer.sourceBefore) restore(source, layer.sourceBefore);
+    });
+    state.vectorLayers = [];
+    state.visualLayers = [];
+    state.sections = [];
+    state.slices = [];
+    state.comments = [];
+    state.labs = [];
+    state.prototypeLinks = [];
+    state.motion = [];
+    state.preview = null;
+    state.pendingLab = null;
+    state.tokens = { ...DEFAULT_TOKENS };
+    state.styles = JSON.parse(JSON.stringify(DEFAULT_STYLES));
+    state.viewport = { scale: 1, x: 0, y: 0 };
+    state.selected = null;
+    state.selectedVectorId = null;
+    state.hover = null;
+    state.history = [];
+    state.future = [];
+    state.patches = [];
+    document.body.style.transform = "";
+    document.body.classList.remove("tinkr-viewport-mode");
+    document.querySelectorAll(".tinkr-hidden").forEach(el => el.classList.remove("tinkr-hidden"));
+    document.querySelectorAll("[data-tinkr-anchor]").forEach(el => el.removeAttribute("data-tinkr-anchor"));
+    applyTokens();
+    teardownInjectedStyles();
+    placeBox("#tinkr-selected");
+    placeBox("#tinkr-hover");
+    drawOverlay();
+    renderVectorLayer();
+    renderPins();
+  }
+
+  async function resetPage(skipConfirm = false) {
+    if (!skipConfirm && !confirm("Reset all edits? The page will return to its original state.")) return;
+
+    state.skipPersist = true;
+    clearTimeout(state.autosaveTimer);
+    clearTimeout(state.cloudSyncTimer);
+
+    while (state.history.length) {
+      const entry = state.history.pop();
+      state.patches.pop();
+      entry.inverse();
+    }
+    state.future = [];
+
+    const leftoverPatches = state.patches.length;
+    state.patches = [];
+
+    await chrome.storage.local.remove(storageKey());
+    await clearCloudDraft();
+
+    if (leftoverPatches > 0) {
+      sessionStorage.setItem("tinkr:reactivate-design", "1");
+      location.reload();
+      return;
+    }
+
+    clearCanvasArtifacts();
+    await chrome.storage.local.set({
+      [storageKey()]: { patches: [], vectorLayers: [], sections: [], viewport: { scale: 1, x: 0, y: 0 }, updatedAt: new Date().toISOString() }
+    });
+    state.skipPersist = false;
+    status("Canvas reset — original page restored.");
+    pushPanelState();
+  }
+
+  function reset() { resetPage(true); }
 
   function draftPayload() {
     return {
       patches: state.patches, labs: state.labs, tokens: state.tokens, sections: state.sections, slices: state.slices,
-      prototypeLinks: state.prototypeLinks, motion: state.motion, vectorLayers: state.vectorLayers,
-      styles: state.styles, components: state.components
+      prototypeLinks: state.prototypeLinks, motion: state.motion, vectorLayers: state.vectorLayers, visualLayers: state.visualLayers,
+      styles: state.styles, components: state.components, variables: state.variables, assets: state.assets, moveMode: state.moveMode
     };
   }
 
@@ -632,12 +988,16 @@
     state.sections = draft.sections || project.canvas_meta?.sections || [];
     state.slices = draft.slices || [];
     state.vectorLayers = draft.vectorLayers || [];
+    state.visualLayers = draft.visualLayers || [];
     state.styles = draft.styles || JSON.parse(JSON.stringify(DEFAULT_STYLES));
     state.components = draft.components || [];
+    state.variables = draft.variables || [];
+    state.assets = draft.assets || [];
+    state.moveMode = draft.moveMode || "visual";
     state.prototypeLinks = draft.prototypeLinks || [];
     state.motion = draft.motion || [];
     state.viewport = project.canvas_meta?.viewportState || state.viewport;
-    applyTokens(); applyViewport(); resetAndReplay(); drawOverlay(); renderVectorLayer(); pushPanelState();
+    applyTokens(); applyViewport(); resetAndReplay(); drawOverlay(); renderVectorLayer(); renderVisualLayers(); pushPanelState();
     chrome.runtime.sendMessage({ type: "TINKR_REALTIME_JOIN", projectId });
     status(`Loaded cloud project "${project.name}".`);
   }
@@ -650,11 +1010,12 @@
     const snap = data.revision?.draft_snapshot || {};
     state.patches = snap.patches || data.revision?.patch_snapshot || [];
     state.vectorLayers = snap.vectorLayers || [];
-    resetAndReplay(); renderVectorLayer();
+    state.visualLayers = snap.visualLayers || [];
+    resetAndReplay(); renderVectorLayer(); renderVisualLayers();
     status("Imported shared revision.");
   }
 
-  function resetAndReplay() { state.undo = []; state.patches.forEach(p => applyPatch(p)); if (state.selected) placeBox("#tinkr-selected", state.selected); pushPanelState(); }
+  function resetAndReplay() { state.history = []; state.future = []; state.patches.forEach(p => applyPatch(p)); if (state.selected) placeBox("#tinkr-selected", state.selected); pushPanelState(); }
 
   async function replay() {
     const data = await chrome.storage.local.get(storageKey());
@@ -665,16 +1026,32 @@
     state.sections = saved.sections || [];
     state.slices = saved.slices || [];
     state.vectorLayers = saved.vectorLayers || [];
+    state.visualLayers = saved.visualLayers || [];
     state.styles = saved.styles || JSON.parse(JSON.stringify(DEFAULT_STYLES));
+    state.components = saved.components || [];
+    state.variables = saved.variables || [];
+    state.assets = saved.assets || [];
+    state.moveMode = saved.moveMode || "visual";
     state.prototypeLinks = saved.prototypeLinks || [];
     state.motion = saved.motion || [];
     state.projectId = saved.projectId || null;
     state.viewport = saved.viewport || state.viewport;
     applyTokens(); applyViewport();
     let missed = 0; state.patches.forEach(p => { if (!applyPatch(p)) missed++; });
-    renderVectorLayer();
+    renderVectorLayer(); renderVisualLayers();
     if (state.patches.length) status(missed ? `${missed} patches need reattachment.` : `Restored ${state.patches.length} local changes.`);
     drawOverlay();
+  }
+
+  function isTransientSession() {
+    return Boolean(state.drag || state.scaleSession || state.panSession || state.strokeSession || state.penSession || state.drawSession?.active);
+  }
+
+  function settleDomPatches() {
+    if (!state.active || isTransientSession()) return;
+    const missing = state.patches.some(p => ["insert_html", "reorder", "reorder_dom", "insert_vector", "move_layer", "set_layer_order", "create_proxy", "hide_source"].includes(p.type) && !TC().resolvePatchTarget(p, document));
+    if (!missing) return;
+    state.patches.forEach(p => applyPatch(p));
   }
 
   function applyPatch(patch) { return TC().applyPatch(patch, document); }
@@ -863,7 +1240,7 @@
 
   function runAction(name) {
     ({
-      duplicate, copy, paste, delete: hide, undo, reset, save, "run-lab": () => {}, "apply-lab": applyLab,
+      duplicate, copy, paste, delete: deleteSelected, undo, redo, reset, "reset-page": resetPage, save, "run-lab": () => {}, "apply-lab": applyLab,
       generate: () => {}, apply: applyPreview, checkpoint: createCheckpoint, "export-patch": exportPatchJson,
       "add-section": () => {}, "pin-comment": () => setTool("comment", "pin"),
       "toggle-viewport": () => { applyViewport(); status("Viewport transform applied."); },
@@ -889,6 +1266,13 @@
     if (cmd === "setBreakpoint") { state.breakpoint = payload.breakpoint; status(`Editing ${state.breakpoint === "base" ? "base" : state.breakpoint + "px override"}.`); return getPanelState(); }
     if (cmd === "setStyle") { setStyle(payload.property, payload.value); return getPanelState(); }
     if (cmd === "setToken") { state.tokens[payload.key] = payload.value; applyTokens(); queueSave(); pushPanelState(); return getPanelState(); }
+    if (cmd === "createVariable") { createVariable(payload); return getPanelState(); }
+    if (cmd === "applyVariable") { applyVariable(payload.id); return getPanelState(); }
+    if (cmd === "selectProxy") { selectProxy(payload.id); return getPanelState(); }
+    if (cmd === "setMoveMode") { state.moveMode = payload.mode === "structural" ? "structural" : "visual"; status(state.moveMode === "visual" ? "Visual canvas mode enabled." : "Structural reorder mode enabled."); return getPanelState(); }
+    if (cmd === "openAssetPicker") { insertImageFromPicker(); return getPanelState(); }
+    if (cmd === "insertAssetById") { const asset = state.assets.find(a => a.id === payload.id); if (asset) { const layer = TC().createShape("image", window.scrollX + 80, window.scrollY + 80, 240, 160, { href: asset.href }); state.vectorLayers.push(layer); push({ type: "insert_vector", vector: layer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id); renderVectorLayer(); }); renderVectorLayer(); selectVector(layer.id); queueSave(); } return getPanelState(); }
+    if (cmd === "insertComponentById") { const item = state.components.find(c => c.id === payload.id); if (item) { const anchor = state.selected || document.body; const holder = document.createElement("div"); holder.innerHTML = item.html; const el = holder.firstElementChild; if (el) { el.setAttribute("data-tinkr-owned", "true"); anchor.after(el); push({ type: "insert_html", parent: selectorFor(anchor.parentElement), after: selectorFor(anchor), html: el.outerHTML }, () => el.remove()); select(el); } } return getPanelState(); }
     if (cmd === "setStyleLib") { state.styles = payload.styles || state.styles; queueSave(); pushPanelState(); return getPanelState(); }
     if (cmd === "selectCrumb") { selectCrumb(payload.index); return getPanelState(); }
     if (cmd === "context") { contextAction(payload.action, payload.value); return getPanelState(); }
@@ -904,9 +1288,14 @@
   }
 
   function startDrag(event) {
+    const proxy = event.target?.closest?.("[data-tinkr-proxy-id]");
+    if (proxy && event.button === 0 && TC().shouldSelectElements(state.tool)) {
+      const layer = state.visualLayers.find(item => item.id === proxy.dataset.tinkrProxyId);
+      if (layer) { selectProxy(layer.id); state.drag = beginProxyDrag(layer, event); capturePointer(event); event.preventDefault(); return; }
+    }
     if (event.target?.classList?.contains("tinkr-scale-handle") && state.tool.variant === "scale" && state.selected) {
       state.scaleSession = { handle: event.target.dataset.handle, el: state.selected, start: snapshot(state.selected), rect: state.selected.getBoundingClientRect(), x: event.clientX, y: event.clientY };
-      event.preventDefault(); return;
+      capturePointer(event); event.preventDefault(); return;
     }
     if (isToolbarTarget(event.target)) return;
     if (state.spaceHand || TC().shouldPan(state.tool)) {
@@ -948,15 +1337,16 @@
 
     if (!state.selected || (!TC().shouldSelectElements(state.tool) && !TC().shouldScale(state.tool))) return;
 
-    const hit = pageElementAt(event.clientX, event.clientY);
-    if (!hit || (hit !== state.selected && !state.selected.contains(hit))) return;
+    if (!eventOnSelected(event)) return;
     event.preventDefault();
-    const el = state.selected, before = snapshot(el);
-    const parent = el.parentElement, parentStyle = parent && getComputedStyle(parent);
-    const flow = Boolean(parent && (parentStyle.display.includes("flex") || parentStyle.display.includes("grid") || getComputedStyle(el).position === "static"));
-    if (!flow && getComputedStyle(el).position === "static") el.style.position = "relative";
-    state.drag = { el, before, x: event.clientX, y: event.clientY, left: parseFloat(el.style.left) || 0, top: parseFloat(el.style.top) || 0, flow, parent, originalNext: el.nextElementSibling, selector: selectorFor(el) };
-    if (flow) status("Reorder mode · drag between siblings to place this layer.");
+    const el = state.selected;
+    const parent = el.parentElement;
+    const owned = el.hasAttribute("data-tinkr-owned") || el.hasAttribute("data-tinkr-wireframe");
+    const flow = state.moveMode === "structural" && !owned;
+    state.drag = beginLayerDrag(el, event, flow);
+    capturePointer(event);
+    if (flow) status("Structural reorder · drag between sibling layers.");
+    else status("Visual move · drop over another layer to place above it.");
   }
 
   function moveDrag(event) {
@@ -1007,6 +1397,13 @@
     }
     if (!state.drag) return;
     const d = state.drag;
+    if (d.kind === "proxy") {
+      const scale = state.viewport.scale || 1;
+      d.layer.x = Math.round(d.before.x + (event.clientX - d.x) / scale);
+      d.layer.y = Math.round(d.before.y + (event.clientY - d.y) / scale);
+      renderVisualLayers();
+      return;
+    }
     if (d.flow) {
       const hit = pageElementAt(event.clientX, event.clientY);
       let sibling = hit;
@@ -1015,14 +1412,26 @@
         const rect = sibling.getBoundingClientRect(), direction = getComputedStyle(d.parent).flexDirection;
         const horizontal = direction?.startsWith("row") || getComputedStyle(d.parent).display.includes("grid");
         const before = horizontal ? event.clientX < rect.left + rect.width / 2 : event.clientY < rect.top + rect.height / 2;
-        d.parent.insertBefore(d.el, before ? sibling : sibling.nextElementSibling);
-        placeBox("#tinkr-selected", d.el);
+        const ref = before ? sibling : sibling.nextElementSibling;
+        if (ref !== d.el && d.el.nextElementSibling !== ref) {
+          d.parent.insertBefore(d.el, ref);
+          const indicator = state.root?.querySelector("#tinkr-insert-indicator");
+          if (indicator) {
+            Object.assign(indicator.style, horizontal
+              ? { left: `${before ? rect.left : rect.right}px`, top: `${rect.top}px`, width: "2px", height: `${rect.height}px` }
+              : { left: `${rect.left}px`, top: `${before ? rect.top : rect.bottom}px`, width: `${rect.width}px`, height: "2px" });
+            indicator.classList.remove("tinkr-hide");
+          }
+          placeBox("#tinkr-selected", d.el);
+        }
       }
       return;
     }
     const scale = state.viewport.scale || 1;
-    d.el.style.left = `${d.left + (event.clientX - d.x) / scale}px`;
-    d.el.style.top = `${d.top + (event.clientY - d.y) / scale}px`;
+    const dx = Math.round((event.clientX - d.x) / scale), dy = Math.round((event.clientY - d.y) / scale);
+    d.el.style.translate = `${d.baseTranslate.x + dx}px ${d.baseTranslate.y + dy}px`;
+    d.dropTarget = layerTargetAt(event.clientX, event.clientY, d.el);
+    showLayerTarget(d.dropTarget);
     placeBox("#tinkr-selected", d.el);
   }
 
@@ -1051,37 +1460,53 @@
     }
     if (!state.drag) return;
     const d = state.drag;
+    if (d.kind === "proxy") {
+      const moved = Math.hypot(event.clientX - d.x, event.clientY - d.y) > 3;
+      if (moved) {
+        state.suppressClick = true;
+        push({ type: "update_proxy", proxyId: d.layer.id, before: d.before, after: { ...d.layer } }, () => { Object.assign(d.layer, d.before); renderVisualLayers(); });
+      } else Object.assign(d.layer, d.before);
+      state.drag = null; releasePointer(event); renderVisualLayers(); return;
+    }
     if (d.flow) {
       const before = d.el.nextElementSibling;
       const changed = before !== d.originalNext;
-      if (changed) push({ type: "reorder", selector: d.selector, target: fingerprint(d.el), parent: selectorFor(d.parent), before: before ? selectorFor(before) : null }, () => d.parent.insertBefore(d.el, d.originalNext));
+      if (changed) push({ type: "reorder_dom", selector: d.selector, target: fingerprint(d.el), parent: selectorFor(d.parent), before: before ? selectorFor(before) : null }, () => d.parent.insertBefore(d.el, d.originalNext));
       else restore(d.el, d.before);
-      state.drag = null; status(changed ? "Layer reordered." : "Reorder cancelled."); return;
+      state.root?.querySelector("#tinkr-insert-indicator")?.classList.add("tinkr-hide");
+      state.drag = null; releasePointer(event); status(changed ? "Layer reordered." : "Reorder cancelled."); return;
     }
-    const moved = d.el.style.left !== `${d.left}px` || d.el.style.top !== `${d.top}px`;
+    commitLayerDrag(d);
+    const moved = Math.hypot(event.clientX - d.x, event.clientY - d.y) > 3;
     if (moved) {
       state.suppressClick = true;
-      push({ type: "set_styles", selector: selectorFor(d.el), styles: { position: d.el.style.position, left: d.el.style.left, top: d.el.style.top } }, () => restore(d.el, d.before));
+      if (d.dropTarget && d.dropTarget !== d.el) d.el.style.zIndex = String((Number(getComputedStyle(d.dropTarget).zIndex) || 0) + 1);
+      push({ type: "move_layer", selector: selectorFor(d.el), target: fingerprint(d.el), before: { style: d.before.style }, after: { styles: { position: d.el.style.position, translate: d.el.style.translate, zIndex: d.el.style.zIndex } } }, () => restore(d.el, d.before));
     } else restore(d.el, d.before);
-    state.drag = null;
+    state.root?.querySelector("#tinkr-layer-target")?.classList.add("tinkr-hide");
+    state.drag = null; releasePointer(event);
   }
 
   function onMove(event) {
     if (!state.active) return;
     drawOverlay(); renderPins(); renderDevOverlay();
     const el = pageElementAt(event.clientX, event.clientY);
+    updateCursor(event, el);
     if (el && !isTinkr(el)) {
-      updateCursor(event, el);
       if (!state.drag && !state.tool.devMode && TC().shouldSelectElements(state.tool) && el !== state.hover) {
         state.hover = el; placeBox("#tinkr-hover", el);
       } else if (state.tool.devMode && el !== state.hover) {
         state.hover = el; renderDevOverlay();
       }
+    } else if (state.hover && !state.drag) {
+      state.hover = null; placeBox("#tinkr-hover");
     }
   }
 
   function onClick(event) {
     if (!state.active || isToolbarTarget(event.target)) return;
+    const proxy = event.target?.closest?.("[data-tinkr-proxy-id]");
+    if (proxy) { selectProxy(proxy.dataset.tinkrProxyId); event.preventDefault(); event.stopPropagation(); return; }
     if (state.suppressClick) { state.suppressClick = false; return; }
     if (state.tool.group === "comment" || state.pinCommentMode) {
       event.preventDefault(); event.stopPropagation();
@@ -1107,6 +1532,13 @@
   function onKey(event) {
     if (!state.active) return;
     if (event.key === "Escape") {
+      if (state.drag) {
+        const drag = state.drag;
+        if (drag.kind === "proxy") { Object.assign(drag.layer, drag.before); renderVisualLayers(); }
+        else restore(drag.el, drag.before);
+        state.drag = null; state.root?.querySelector("#tinkr-layer-target")?.classList.add("tinkr-hide"); releasePointer(event); status("Move cancelled."); return;
+      }
+      if (state.scaleSession) { restore(state.scaleSession.el, state.scaleSession.start); state.scaleSession = null; releasePointer(event); status("Scale cancelled."); return; }
       if (state.strokeSession) { state.strokeSession = null; renderVectorLayer(); return; }
       if (state.penNodes.length) { state.penNodes = []; state.penSession = null; renderVectorLayer(); return; }
       if (state.tool.devMode) { setDevMode(false); return; }
@@ -1114,8 +1546,9 @@
     }
     if (event.target.matches("input,textarea,[contenteditable='true']")) return;
     const mod = event.ctrlKey || event.metaKey;
-    if (mod && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; }
-    if ((event.key === "Delete" || event.key === "Backspace") && !state.tool.devMode) { event.preventDefault(); hide(); return; }
+    if (mod && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); return; }
+    if (mod && event.key.toLowerCase() === "y") { event.preventDefault(); redo(); return; }
+    if ((event.key === "Delete" || event.key === "Backspace") && !state.tool.devMode) { event.preventDefault(); deleteSelected(); return; }
     if (event.code === "Space" && !event.repeat) {
       if (!state.spaceHand) state.spaceHand = true;
       event.preventDefault();
@@ -1139,11 +1572,22 @@
     if (event.key.toLowerCase() === "f") setTool("region", "frame");
     if (event.key.toLowerCase() === "o") setTool("shape", "ellipse");
     if (event.key.toLowerCase() === "t") setTool("text", "text");
+    if (selectedProxy() && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key)) {
+      event.preventDefault(); const layer = selectedProxy(), before = { ...layer }, step = event.shiftKey ? 8 : 1;
+      if (event.key === "ArrowUp") layer.y -= step;
+      if (event.key === "ArrowDown") layer.y += step;
+      if (event.key === "ArrowLeft") layer.x -= step;
+      if (event.key === "ArrowRight") layer.x += step;
+      renderVisualLayers(); push({ type: "update_proxy", proxyId: layer.id, before, after: { ...layer } }, () => { Object.assign(layer, before); renderVisualLayers(); });
+      return;
+    }
     if (state.selected && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key) && TC().shouldSelectElements(state.tool)) {
       event.preventDefault(); const step = event.shiftKey ? 8 : 1; const property = /Left|Right/.test(event.key) ? "left" : "top"; const direction = /Up|Left/.test(event.key) ? -1 : 1;
-      const before = snapshot(state.selected); state.selected.style.position = getComputedStyle(state.selected).position === "static" ? "relative" : getComputedStyle(state.selected).position;
-      state.selected.style[property] = `${(parseFloat(state.selected.style[property]) || 0) + direction * step}px`;
-      push({ type: "set_styles", selector: selectorFor(state.selected), styles: { position: state.selected.style.position, [property]: state.selected.style[property] } }, () => restore(state.selected, before));
+      const before = snapshot(state.selected);
+      const prepared = prepareVisualLayer(state.selected);
+      const current = translateParts(state.selected.style.translate);
+      state.selected.style.translate = `${current.x + (property === "left" ? direction * step : 0)}px ${current.y + (property === "top" ? direction * step : 0)}px`;
+      push({ type: "move_layer", selector: selectorFor(state.selected), target: fingerprint(state.selected), before: { style: before.style }, after: { styles: { position: state.selected.style.position, translate: state.selected.style.translate, zIndex: state.selected.style.zIndex } } }, () => restore(state.selected, prepared.before));
       placeBox("#tinkr-selected", state.selected);
     }
   }
@@ -1155,7 +1599,7 @@
     applyViewport(); queueSave();
   }
 
-  function onScroll() { if (state.active) { drawOverlay(); renderPins(); } }
+  function onScroll() { if (state.active) { drawOverlay(); renderPins(); renderVisualLayers(); } }
 
   async function bootFromUrl() {
     const params = new URLSearchParams(location.search);
@@ -1188,7 +1632,7 @@
   }
 
   function onPageHide() {
-    if (!state.active) return;
+    if (!state.active || state.skipPersist) return;
     clearTimeout(state.autosaveTimer);
     clearTimeout(state.cloudSyncTimer);
     save().then(() => deactivate({ silent: true }));
@@ -1199,13 +1643,14 @@
     createOverlay();
     state.active = true;
     document.body.classList.add("tinkr-design-mode");
-    document.addEventListener("mousemove", onMove, true);
+    document.addEventListener("pointermove", onMove, true);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKey, true);
     document.addEventListener("keyup", onKeyUp, true);
-    document.addEventListener("mousedown", startDrag, true);
-    document.addEventListener("mouseup", endDrag, true);
-    document.addEventListener("mousemove", moveDrag, true);
+    document.addEventListener("pointerdown", startDrag, true);
+    document.addEventListener("pointerup", endDrag, true);
+    document.addEventListener("pointercancel", endDrag, true);
+    document.addEventListener("pointermove", moveDrag, true);
     document.addEventListener("wheel", onWheel, { passive: false, capture: true });
     window.addEventListener("scroll", onScroll, true);
     state.onPageHide = onPageHide;
@@ -1213,7 +1658,11 @@
     window.addEventListener("beforeunload", state.onPageHide);
     window.addEventListener("blur", onWindowBlur);
     document.addEventListener("visibilitychange", onVisibilityChange);
-    state.observer = new MutationObserver(() => { clearTimeout(state.settleTimer); state.settleTimer = setTimeout(() => { if (state.active) state.patches.forEach(p => applyPatch(p)); }, 160); });
+    state.observer = new MutationObserver(() => {
+      if (isTransientSession()) return;
+      clearTimeout(state.settleTimer);
+      state.settleTimer = setTimeout(settleDomPatches, 160);
+    });
     state.observer.observe(document.body, { childList: true, subtree: true });
     await bootFromUrl();
     await replay();
@@ -1256,8 +1705,8 @@
     window.removeEventListener("blur", onWindowBlur);
     document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("wheel", onWheel, true);
-    ["mousemove", "click", "keydown", "keyup", "mousedown", "mouseup"].forEach(type => document.removeEventListener(type, ({ mousemove: onMove, click: onClick, keydown: onKey, keyup: onKeyUp, mousedown: startDrag, mouseup: endDrag })[type], true));
-    document.removeEventListener("mousemove", moveDrag, true);
+    ["pointermove", "click", "keydown", "keyup", "pointerdown", "pointerup", "pointercancel"].forEach(type => document.removeEventListener(type, ({ pointermove: onMove, click: onClick, keydown: onKey, keyup: onKeyUp, pointerdown: startDrag, pointerup: endDrag, pointercancel: endDrag })[type], true));
+    document.removeEventListener("pointermove", moveDrag, true);
     state.toolbarCleanup?.();
     state.toolbarCleanup = null;
     teardownInjectedStyles();
@@ -1290,4 +1739,9 @@
       return true;
     }
   });
+
+  if (sessionStorage.getItem("tinkr:reactivate-design") === "1") {
+    sessionStorage.removeItem("tinkr:reactivate-design");
+    setTimeout(() => { activate().catch(() => {}); }, 50);
+  }
 })();
