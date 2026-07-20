@@ -1,6 +1,7 @@
 (() => {
-  const DIST_PENCIL = 3.5;
+  const DIST_PENCIL = 2;
   const DIST_PEN = 0;
+  const TENSION = 8;
 
   function ink(name, fallback) {
     const root = document.getElementById("tinkr-root");
@@ -9,82 +10,77 @@
     return v || fallback;
   }
 
-  function dist(a, b) {
-    return Math.hypot(b.x - a.x, b.y - a.y);
+  function dist(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+
+  function polylineToLinePath(points) {
+    if (!points.length) return "";
+    let d = `M ${points[0].x} ${points[0].y}`;
+    for (let i = 1; i < points.length; i++) d += ` L ${points[i].x} ${points[i].y}`;
+    return d;
   }
 
-  function perpendicularDistance(point, lineStart, lineEnd) {
-    const dx = lineEnd.x - lineStart.x;
-    const dy = lineEnd.y - lineStart.y;
-    if (dx === 0 && dy === 0) return dist(point, lineStart);
-    const t = ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / (dx * dx + dy * dy);
-    const proj = { x: lineStart.x + t * dx, y: lineStart.y + t * dy };
-    return dist(point, proj);
-  }
-
-  function smoothPolyline(points, tolerance = 2.5) {
-    if (points.length <= 2) return points.slice();
-    let maxDist = 0;
-    let index = 0;
-    const end = points.length - 1;
-    for (let i = 1; i < end; i++) {
-      const d = perpendicularDistance(points[i], points[0], points[end]);
-      if (d > maxDist) { maxDist = d; index = i; }
+  function chaikinOnce(points) {
+    if (points.length < 3) return points.slice();
+    const out = [points[0]];
+    for (let i = 0; i < points.length - 1; i++) {
+      const p0 = points[i], p1 = points[i + 1];
+      out.push({ x: p0.x * 0.75 + p1.x * 0.25, y: p0.y * 0.75 + p1.y * 0.25 });
+      out.push({ x: p0.x * 0.25 + p1.x * 0.75, y: p0.y * 0.25 + p1.y * 0.75 });
     }
-    if (maxDist > tolerance) {
-      const left = smoothPolyline(points.slice(0, index + 1), tolerance);
-      const right = smoothPolyline(points.slice(index), tolerance);
-      return left.slice(0, -1).concat(right);
-    }
-    return [points[0], points[end]];
+    out.push(points[points.length - 1]);
+    return out;
   }
 
-  function polylineToSmoothPath(points) {
+  function polylineToSmoothPath(points, tension = TENSION) {
     if (points.length < 2) return "";
-    if (points.length === 2) {
-      return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
-    }
+    if (points.length === 2) return polylineToLinePath(points);
     let d = `M ${points[0].x} ${points[0].y}`;
     for (let i = 0; i < points.length - 1; i++) {
       const p0 = points[i - 1] || points[i];
       const p1 = points[i];
       const p2 = points[i + 1];
       const p3 = points[i + 2] || p2;
-      const cp1x = p1.x + (p2.x - p0.x) / 6;
-      const cp1y = p1.y + (p2.y - p0.y) / 6;
-      const cp2x = p2.x - (p3.x - p1.x) / 6;
-      const cp2y = p2.y - (p3.y - p1.y) / 6;
+      const cp1x = p1.x + (p2.x - p0.x) / tension;
+      const cp1y = p1.y + (p2.y - p0.y) / tension;
+      const cp2x = p2.x - (p3.x - p1.x) / tension;
+      const cp2y = p2.y - (p3.y - p1.y) / tension;
       d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
     }
     return d;
   }
 
+  function strokeLength(points) {
+    let len = 0;
+    for (let i = 1; i < points.length; i++) len += dist(points[i - 1], points[i]);
+    return len;
+  }
+
   function createStrokeSession(mode) {
-    return {
-      mode,
-      points: [],
-      minDist: mode === "pencil" ? DIST_PENCIL : DIST_PEN,
-      raf: null,
-      pending: null
-    };
+    return { mode, points: [], minDist: mode === "pencil" ? DIST_PENCIL : DIST_PEN, raf: null, pending: null, shiftAxis: null };
   }
 
   function addPoint(session, x, y) {
     const pt = { x, y };
-    if (!session.points.length) {
-      session.points.push(pt);
-      return true;
-    }
+    if (!session.points.length) { session.points.push(pt); return true; }
     const last = session.points[session.points.length - 1];
-    if (dist(last, pt) >= session.minDist) {
-      session.points.push(pt);
-      return true;
-    }
+    if (dist(last, pt) >= session.minDist) { session.points.push(pt); return true; }
     return false;
   }
 
-  function schedulePoint(session, x, y, onUpdate) {
-    session.pending = { x, y };
+  function constrainShift(last, x, y) {
+    const dx = x - last.x, dy = y - last.y;
+    if (Math.abs(dx) < 2 && Math.abs(dy) < 2) return { x, y };
+    if (Math.abs(dx) >= Math.abs(dy)) return { x, y: last.y };
+    return { x: last.x, y };
+  }
+
+  function schedulePoint(session, x, y, onUpdate, opts = {}) {
+    let px = x, py = y;
+    if (opts.shiftKey && session.points.length) {
+      const last = session.points[session.points.length - 1];
+      ({ x: px, y: py } = constrainShift(last, x, y));
+    }
+    session.pending = { x: px, y: py };
     if (session.raf) return;
     session.raf = requestAnimationFrame(() => {
       session.raf = null;
@@ -96,31 +92,31 @@
     });
   }
 
-  function finishStroke(session) {
+  function finishStroke(session, opts = {}) {
     if (session.raf) cancelAnimationFrame(session.raf);
     session.raf = null;
     if (session.pending) {
       addPoint(session, session.pending.x, session.pending.y);
       session.pending = null;
     }
-    const simplified = smoothPolyline(session.points, session.mode === "pencil" ? 2.5 : 1);
-    const d = polylineToSmoothPath(simplified);
-    return { d, points: simplified, mode: session.mode };
+    const raw = session.points.slice();
+    if (raw.length < 2) return { d: "", points: raw, mode: session.mode };
+    const len = strokeLength(raw);
+    const highFidelity = opts.fidelity === "high" || raw.length < 30 || len < 120;
+    if (highFidelity) {
+      return { d: polylineToLinePath(raw), points: raw, mode: session.mode };
+    }
+    const softened = chaikinOnce(raw);
+    return { d: polylineToSmoothPath(softened, TENSION), points: softened, mode: session.mode };
   }
 
   function renderStrokePreview(session) {
     if (!session?.points?.length) return "";
-    const stroke = session.mode === "pencil"
-      ? ink("--tk-ink-pencil", "#9aa4b8")
-      : ink("--tk-ink-pen", "#76e7ff");
-    const width = session.mode === "pencil"
-      ? ink("--tk-stroke-width-pencil", "2")
-      : ink("--tk-stroke-width-pen", "1.5");
+    const stroke = session.mode === "pencil" ? ink("--tk-ink-pencil", "#9aa4b8") : ink("--tk-ink-pen", "#76e7ff");
+    const width = session.mode === "pencil" ? ink("--tk-stroke-width-pencil", "2") : ink("--tk-stroke-width-pen", "1.5");
     const pts = session.points.slice();
     if (session.pending) pts.push(session.pending);
-    const d = pts.length >= 3 ? polylineToSmoothPath(pts) : pts.length === 2
-      ? `M ${pts[0].x} ${pts[0].y} L ${pts[1].x} ${pts[1].y}`
-      : pts.length === 1 ? `M ${pts[0].x} ${pts[0].y} L ${pts[0].x + 0.01} ${pts[0].y}` : "";
+    const d = polylineToLinePath(pts);
     if (!d) return "";
     return `<path class="tinkr-stroke-preview" d="${d}" fill="none" stroke="${stroke}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round"/>`;
   }
@@ -156,6 +152,6 @@
   window.TinkrCanvas = window.TinkrCanvas || {};
   Object.assign(window.TinkrCanvas, {
     createStrokeSession, addPoint, schedulePoint, finishStroke,
-    smoothPolyline, polylineToSmoothPath, renderStrokePreview, renderPenPreview, strokeInk: ink
+    polylineToLinePath, polylineToSmoothPath, renderStrokePreview, renderPenPreview, strokeInk: ink
   });
 })();
