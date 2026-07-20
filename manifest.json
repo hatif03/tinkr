@@ -3,7 +3,7 @@
   "name": "Tinkr",
   "version": "0.3.0",
   "description": "Remix live webpages without changing the original site.",
-  "permissions": ["storage", "activeTab", "identity", "tabs", "sidePanel"],
+  "permissions": ["storage", "activeTab", "identity", "tabs", "sidePanel", "scripting", "downloads"],
   "host_permissions": [
     "http://localhost:8787/*",
     "http://localhost:3000/*",
