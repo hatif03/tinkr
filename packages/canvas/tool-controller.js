@@ -8,6 +8,7 @@
   }
 
   function shouldPan(tool) {
+    // Hand tool; Space-hold pan is handled via content.js spaceHand override.
     return tool.group === "move" && tool.variant === "hand";
   }
 
