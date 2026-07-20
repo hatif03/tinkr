@@ -51,9 +51,12 @@ button.full,.panel>button[data-action],.panel>button[data-action="export-patch"]
 .crumb{border:0;background:#2a2b34;color:#d8d9df;border-radius:5px;padding:4px 8px;font-size:10px;cursor:pointer}
 .presence{display:flex;gap:4px;flex-wrap:wrap}
 .avatar{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font:700 10px Inter;color:#111}
-.actions,.add-row,.autolayout,.section-tools{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.actions button,.add-row button,.autolayout button,.section-tools button{border:0;border-radius:7px;background:#292a33;color:#eef0f3;padding:7px 4px;font:600 10px Inter;cursor:pointer;transition:background .12s ease,transform .12s ease}.actions button:hover,.add-row button:hover,.autolayout button:hover,.section-tools button:hover{background:#343641;transform:translateY(-1px)}
-.actions button.danger{color:#ff9da2}
+.actions,.add-row,.autolayout,.section-tools,.history-actions{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.history-actions{grid-template-columns:repeat(3,1fr)}
+.actions button,.add-row button,.autolayout button,.section-tools button,.history-actions button{border:0;border-radius:7px;background:#292a33;color:#eef0f3;padding:7px 4px;font:600 10px Inter;cursor:pointer;transition:background .12s ease,transform .12s ease}
+.actions button:hover,.add-row button:hover,.autolayout button:hover,.section-tools button:hover,.history-actions button:hover:not(:disabled){background:#343641;transform:translateY(-1px)}
+.actions button:disabled,.history-actions button:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.actions button.danger,.history-actions button.danger{color:#ff9da2}
 .breakpoints{display:flex;gap:4px;flex-wrap:wrap}
 .breakpoints button{border:1px solid #383944;background:#202129;color:#cdd0da;border-radius:5px;padding:5px 8px;font-size:10px;cursor:pointer}
 .breakpoints button.active{border-color:#b8ff37;color:#b8ff37}
@@ -63,6 +66,7 @@ button.full,.panel>button[data-action],.panel>button[data-action="export-patch"]
 .context{border-top:1px solid #292a32;padding-top:8px}
 .context h4{font-size:11px;margin:0 0 6px;color:#dfe1e8}
 .context button{border:0;background:#292a33;color:#eef0f3;padding:6px 8px;border-radius:6px;font:600 10px Inter;margin:2px 4px 2px 0;cursor:pointer}
+.arrange-title{margin:6px 0 3px;color:#9d9da7;font:700 9px Inter;text-transform:uppercase;letter-spacing:.06em}.arrange-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px;margin-bottom:6px}.context .arrange-grid button{margin:0;padding:6px 5px}.context .arrange-grid button.active{background:#b8ff3718;color:#b8ff37;box-shadow:inset 0 0 0 1px #b8ff3766}
 .ai,.lab{margin-top:4px;border-top:1px solid #292a32;padding-top:8px}
 .ai textarea,.lab textarea,#lab-name{width:100%;background:#202129;border:1px solid #383944;border-radius:7px;color:#fff;padding:7px;font:11px Inter}
 .ai textarea,.lab textarea{height:52px;resize:vertical;margin-top:4px}
@@ -81,3 +85,4 @@ button.full,.panel>button[data-action],.panel>button[data-action="export-patch"]
 .footnote{color:#8d8e99;font-size:11px;margin:0;line-height:1.4}
 .tinkr-hide{display:none!important}
 .pin-mode{color:#7ce9ff;font-size:11px;font-weight:600}
+.canvas-tabs{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;margin-bottom:10px}.canvas-tabs button{border:1px solid #383944;border-radius:6px;background:#202129;color:#aeb0ba;padding:6px 3px;font:700 9px Inter;cursor:pointer}.canvas-tabs button.active{border-color:#7ce9ff;color:#7ce9ff;background:#7ce9ff12}.canvas-hint{margin:6px 0 10px;color:#8d8e99;font-size:10px;line-height:1.4}.variable-form{display:grid;grid-template-columns:1fr 76px;gap:6px}.variable-form input,.variable-form select,.variable-form button{min-width:0;border:1px solid #383944;border-radius:6px;background:#202129;color:#f7f7fa;padding:6px;font:10px Inter}.variable-form button{grid-column:span 2;background:#292a33;font-weight:700}.list .canvas-item{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:5px 0}.list .canvas-item button{border:0;border-radius:5px;background:#292a33;color:#7ce9ff;padding:4px 6px;font:600 10px Inter;cursor:pointer}

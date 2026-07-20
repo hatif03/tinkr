@@ -167,11 +167,15 @@ function renderFromState(s) {
   if (s.selection) {
     const sel = s.selection;
     ctx.innerHTML = `<h4>${sel.type} · parent ${sel.parentDisplay}</h4>
+      <div class="arrange-title">Arrange · ${s.moveMode === "structural" ? "source layout" : "visual canvas"}</div>
+      <div class="arrange-grid"><button data-context="move-visual" class="${s.moveMode !== "structural" ? "active" : ""}">Free move</button><button data-context="move-structural" class="${s.moveMode === "structural" ? "active" : ""}">Reorder layout</button><button data-context="front">Front</button><button data-context="forward">Forward</button><button data-context="backward">Backward</button><button data-context="back">Back</button><button data-context="above">Place above</button><button data-context="below">Place below</button></div>
+      ${!sel.proxy ? '<button data-context="visual-copy">Create visual copy</button>' : ""}
       ${sel.context.text ? '<button data-context="edit">Edit text</button><button data-context="upper">Uppercase</button>' : ""}
       ${sel.context.image ? '<button data-context="cover">Cover</button><button data-context="contain">Contain</button><button data-context="alt">Set alt</button>' : ""}
       <button data-context="copy-style">Copy style</button>
       <button data-context="paste-style">Paste style</button>
       <button data-context="extract-tokens">Extract tokens</button>
+      <button data-context="make-component">Make component</button>
       <button data-context="ready">Ready for build</button>
       <button data-context="note">Annotate</button>`;
     ctx.querySelectorAll("[data-context]").forEach(b => b.onclick = () => {
@@ -191,8 +195,17 @@ function renderFromState(s) {
   $("color-styles").innerHTML = (s.styles?.colors || []).map(c => `<button class="style-chip color" data-apply-color="${c.id}" style="--swatch:${c.value}"><span></span>${c.name}</button>`).join("");
   $("color-styles").querySelectorAll("[data-apply-color]").forEach(b => b.onclick = () => send("context", { action: "apply-color-style", value: b.dataset.applyColor }));
 
-  const layerItems = (s.vectorLayers || []).map(v => `<li><button data-vector="${v.id}">${v.type} · ${v.id.slice(0, 8)}</button></li>`).join("");
-  $("layers").innerHTML = layerItems || "<li>No vector layers</li>";
+  const vectorItems = (s.vectorLayers || []).map(v => `<li><button data-vector="${v.id}">${v.type} · ${v.id.slice(0, 8)}</button></li>`).join("");
+  const visualItems = (s.visualLayers || []).map(v => `<li class="canvas-item"><span>Visual copy · z ${v.zIndex}</span><button data-proxy="${v.id}">Select</button></li>`).join("");
+  $("layers").innerHTML = visualItems + vectorItems || "<li>No canvas layers yet</li>";
+  $("layers").querySelectorAll("[data-proxy]").forEach(b => b.onclick = () => send("selectProxy", { id: b.dataset.proxy }));
+
+  $("assets-list").innerHTML = (s.assets || []).map(a => `<li class="canvas-item"><span title="${a.name}">${a.name}</span><button data-asset-insert="${a.id}">Insert</button></li>`).join("") || "<li>No uploaded assets</li>";
+  $("components-list").innerHTML = (s.components || []).map(c => `<li class="canvas-item"><span>${c.name}</span><button data-component-insert="${c.id}">Insert</button></li>`).join("") || "<li>No saved components</li>";
+  $("variables-list").innerHTML = (s.variables || []).map(v => `<li class="canvas-item"><span>${v.name} · ${v.value}</span><button data-variable-apply="${v.id}">Apply</button></li>`).join("") || "<li>No variables yet</li>";
+  $("assets-list").querySelectorAll("[data-asset-insert]").forEach(b => b.onclick = () => send("insertAssetById", { id: b.dataset.assetInsert }));
+  $("components-list").querySelectorAll("[data-component-insert]").forEach(b => b.onclick = () => send("insertComponentById", { id: b.dataset.componentInsert }));
+  $("variables-list").querySelectorAll("[data-variable-apply]").forEach(b => b.onclick = () => send("applyVariable", { id: b.dataset.variableApply }));
 
   $("sections").innerHTML = (s.sections || []).map(sec => `<li><button data-section="${sec.id}">${sec.label}</button></li>`).join("") || "<li>No sections yet</li>";
   $("sections").querySelectorAll("[data-section]").forEach(b => b.onclick = () => send("scrollSection", { id: b.dataset.section }));
@@ -205,6 +218,14 @@ function renderFromState(s) {
 
   if (s.a11ySnapshot) $("a11y-output").textContent = s.a11ySnapshot;
   if (s.devOutput) $("dev-output").textContent = s.devOutput;
+
+  const undoBtn = $("btn-undo");
+  const redoBtn = $("btn-redo");
+  if (undoBtn) {
+    undoBtn.disabled = !s.canUndo;
+    undoBtn.textContent = s.canUndo ? `Undo (${s.editCount})` : "Undo";
+  }
+  if (redoBtn) redoBtn.disabled = !s.canRedo;
 
   if (s.preview) {
     $("preview").textContent = JSON.stringify(s.preview, null, 2);
@@ -310,6 +331,7 @@ document.querySelectorAll("[data-action]").forEach(b => b.addEventListener("clic
   }
   if (action === "present") { await send("setProtoMode", { on: true }); return; }
   if (action === "toggle-timeline") { statusEl.textContent = "Use Motion on floating toolbar for timeline."; return; }
+  if (action === "reset-page") { await send("action", { name: "reset-page" }); return; }
   try { await send("action", { name: action }); } catch { statusEl.textContent = "Command failed — is Design Mode on?"; }
 }));
 
@@ -317,6 +339,17 @@ document.querySelectorAll("[data-add]").forEach(b => b.onclick = () => send("ins
 document.querySelectorAll("[data-autolayout]").forEach(b => b.onclick = () => send("autoLayout", { kind: b.dataset.autolayout }));
 document.querySelectorAll("[data-breakpoint]").forEach(b => b.onclick = () => send("setBreakpoint", { breakpoint: b.dataset.breakpoint }));
 document.querySelectorAll("[data-style]").forEach(input => input.addEventListener("change", () => send("setStyle", { property: input.dataset.style, value: input.value })));
+
+document.querySelectorAll("[data-canvas-tab]").forEach(button => button.onclick = () => {
+  const tab = button.dataset.canvasTab;
+  document.querySelectorAll("[data-canvas-tab]").forEach(b => b.classList.toggle("active", b.dataset.canvasTab === tab));
+  document.querySelectorAll("[data-canvas-view]").forEach(view => view.classList.toggle("tinkr-hide", view.dataset.canvasView !== tab));
+});
+$("asset-upload")?.addEventListener("click", () => send("openAssetPicker"));
+$("make-component")?.addEventListener("click", () => send("context", { action: "make-component" }));
+$("variable-create")?.addEventListener("click", () => send("createVariable", {
+  name: $("variable-name").value, type: $("variable-type").value, value: $("variable-value").value
+}).then(() => { $("variable-name").value = ""; $("variable-value").value = ""; }));
 $("local-fonts")?.addEventListener("change", e => {
   const family = e.target.value;
   if (family) send("setStyle", { property: "fontFamily", value: family }).catch(() => {});
