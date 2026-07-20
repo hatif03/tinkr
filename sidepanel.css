@@ -28,7 +28,11 @@ button.full,.panel>button[data-action],.panel>button[data-action="export-patch"]
 .mode-pills{display:flex;gap:4px;margin-bottom:4px}
 .mode-pills button{flex:1;border:1px solid #383944;background:#202129;color:#aeb0ba;border-radius:6px;padding:6px;font:700 10px Inter;cursor:pointer}
 .mode-pills button.active{border-color:#b8ff37;color:#b8ff37;background:#b8ff3712}
-.mode-pills button[data-mode="dev"].active{border-color:#c4a1ff;color:#c4a1ff;background:#c4a1ff12}
+.mode-pills button[data-mode="proto"].active{border-color:#ffbd63;color:#ffbd63;background:#ffbd6312}
+.pill-icon{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:middle}
+.pill-design{background:#c9ff46}.pill-dev{background:#c4a1ff}.pill-proto{background:#ffbd63}
+.tool-active{margin:0 0 4px;padding:6px 8px;border:1px solid #383944;border-radius:6px;background:#202129;color:#cdd0da;font:600 10px Inter}
+.proto-hint{font-size:10px;color:#ffbd63;margin:0 0 8px;line-height:1.4}
 .panel-sub{margin:8px 0 4px;font-size:11px;color:#dfe1e8}
 .style-lib summary{cursor:pointer;font:700 11px Inter;color:#aeb0ba;padding:4px 0}
 .style-list{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0}

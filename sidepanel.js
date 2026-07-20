@@ -68,6 +68,11 @@ function renderFromState(s) {
   if (!s.active) return;
 
   statusEl.textContent = s.status || "Use the floating toolbar on the page.";
+  const toolActive = $("tool-active");
+  if (s.activeToolLabel && s.tool && !s.tool.devMode) {
+    toolActive.textContent = s.activeToolLabel;
+    toolActive.classList.remove("tinkr-hide");
+  } else toolActive.classList.add("tinkr-hide");
   const syncing = /saving|sync/i.test(s.status || "");
   const warning = /failed|offline|reattach|attention/i.test(s.status || "");
   saveState.textContent = warning ? "Needs attention" : syncing ? "Saving" : s.signedIn ? "Saved" : "Local";

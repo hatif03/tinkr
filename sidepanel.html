@@ -25,10 +25,11 @@
 
       <section id="tools" class="tools tinkr-hide">
         <div class="mode-pills">
-          <button data-mode="design" class="active">Design</button>
-          <button data-mode="dev">Dev</button>
-          <button data-mode="proto">Proto</button>
+          <button data-mode="design" class="active"><span class="pill-icon pill-design" aria-hidden="true"></span>Design</button>
+          <button data-mode="dev"><span class="pill-icon pill-dev" aria-hidden="true"></span>Dev</button>
+          <button data-mode="proto"><span class="pill-icon pill-proto" aria-hidden="true"></span>Proto</button>
         </div>
+        <p id="tool-active" class="tool-active tinkr-hide" aria-live="polite"></p>
         <div class="tabs">
           <button data-panel="design" class="active">Design</button>
           <button data-panel="canvas">Canvas</button>
@@ -114,13 +115,14 @@
         </div>
 
         <div id="panel-inspect" class="panel tinkr-hide">
-          <p class="inspect-hint">Dev Mode — read-only inspect. Toggle with &lt;/&gt; on the floating toolbar.</p>
+          <p class="inspect-hint">Dev Mode — read-only inspect. Toggle with the bracket icon on the floating toolbar.</p>
           <pre id="dev-output" class="dev">Select an element for Dev Mode specs.</pre>
           <button data-action="export-patch">Export patch JSON</button>
           <button data-action="copy-css" class="secondary">Copy CSS</button>
         </div>
 
         <div id="panel-proto" class="panel tinkr-hide">
+          <p class="proto-hint">Present = preview in browser · Motion = keyframe timeline</p>
           <button data-action="add-hotspot">Link hotspot</button>
           <button data-action="present" class="secondary">Present</button>
           <ul id="proto-list" class="list"></ul>
