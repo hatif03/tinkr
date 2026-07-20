@@ -30,6 +30,7 @@
           <button data-mode="proto"><span class="pill-icon pill-proto" aria-hidden="true"></span>Proto</button>
         </div>
         <p id="tool-active" class="tool-active tinkr-hide" aria-live="polite"></p>
+        <p id="cross-tab-hint" class="cross-tab-hint tinkr-hide" aria-live="polite"></p>
         <div class="tabs">
           <button data-panel="design" class="active">Design</button>
           <button data-panel="canvas">Canvas</button>
@@ -56,6 +57,7 @@
             <button data-breakpoint="480">Mobile</button>
           </div>
           <div class="controls">
+            <label>Local font<select id="local-fonts"><option value="">Loading fonts…</option></select></label>
             <label>Background<input data-style="backgroundColor" type="color"></label>
             <label>Text color<input data-style="color" type="color"></label>
             <label>Font size<input data-style="fontSize" type="number" min="8" max="120"></label>
@@ -117,7 +119,10 @@
         <div id="panel-inspect" class="panel tinkr-hide">
           <p class="inspect-hint">Dev Mode — read-only inspect. Toggle with the bracket icon on the floating toolbar.</p>
           <pre id="dev-output" class="dev">Select an element for Dev Mode specs.</pre>
+          <h4 class="panel-sub">Accessibility</h4>
+          <pre id="a11y-output" class="dev">Select an element for role, label, and contrast.</pre>
           <button data-action="export-patch">Export patch JSON</button>
+          <button data-action="export-slice" class="secondary">Export viewport PNG</button>
           <button data-action="copy-css" class="secondary">Copy CSS</button>
         </div>
 

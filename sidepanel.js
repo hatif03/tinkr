@@ -1,5 +1,7 @@
 const appUrl = TINKR_CONFIG.appUrl;
 let pageState = null;
+let lastTabId = null;
+let fetchGen = 0;
 
 const $ = id => document.getElementById(id);
 const tools = $("tools");
@@ -15,6 +17,9 @@ const modeLabel = $("mode-label");
 const modeBadge = $("mode-badge");
 const statusEl = $("status");
 const saveState = $("save-state");
+const crossTabHint = $("cross-tab-hint");
+
+chrome.runtime.connect({ name: "tinkr-panel" });
 
 async function tabId() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -27,14 +32,67 @@ async function send(cmd, payload = {}) {
   return chrome.tabs.sendMessage(id, { type: "TINKR_CMD", cmd, payload });
 }
 
-async function fetchState() {
-  const id = await tabId();
+async function fetchStateForTab(id) {
   if (!id) return null;
   try {
     return await chrome.tabs.sendMessage(id, { type: "TINKR_GET_STATE" });
   } catch {
     return null;
   }
+}
+
+async function getDesignTabInfo() {
+  try {
+    return await chrome.runtime.sendMessage({ type: "TINKR_GET_DESIGN_TAB" });
+  } catch {
+    return { tabId: null };
+  }
+}
+
+function resetPanelUi(reason) {
+  pageState = null;
+  setModeUi(false);
+  if (statusEl) statusEl.textContent = reason || "Ready — open a page and enter Design Mode.";
+  $("tool-active")?.classList.add("tinkr-hide");
+  crossTabHint?.classList.add("tinkr-hide");
+}
+
+function showCrossTabHint(remoteTabId) {
+  if (!crossTabHint) return;
+  crossTabHint.classList.remove("tinkr-hide");
+  crossTabHint.innerHTML = `Design Mode is active on another tab. Return there to edit, or switch now. <button type="button" id="switch-design-tab">Switch to tab</button>`;
+  $("switch-design-tab")?.addEventListener("click", () => {
+    chrome.tabs.update(remoteTabId, { active: true });
+  }, { once: true });
+}
+
+async function refreshPanelState() {
+  const gen = ++fetchGen;
+  const id = await tabId();
+  if (!id) {
+    resetPanelUi("No active tab.");
+    return;
+  }
+  lastTabId = id;
+  const s = await fetchStateForTab(id);
+  if (gen !== fetchGen) return;
+
+  if (s?.active) {
+    renderFromState(s);
+    crossTabHint?.classList.add("tinkr-hide");
+    return;
+  }
+
+  const remote = await getDesignTabInfo();
+  if (gen !== fetchGen) return;
+
+  if (remote?.tabId && remote.tabId !== id) {
+    resetPanelUi("Design Mode is on another tab.");
+    showCrossTabHint(remote.tabId);
+    return;
+  }
+
+  resetPanelUi(s ? "Design Mode is off on this page." : "Reload the page if Tinkr tools don't appear.");
 }
 
 function setModeUi(active) {
@@ -65,6 +123,7 @@ function renderFromState(s) {
   if (!s) return;
   pageState = s;
   setModeUi(s.active);
+  crossTabHint?.classList.add("tinkr-hide");
   if (!s.active) return;
 
   statusEl.textContent = s.status || "Use the floating toolbar on the page.";
@@ -90,7 +149,7 @@ function renderFromState(s) {
     crumbs.querySelectorAll("[data-crumb]").forEach(b => b.onclick = () => send("selectCrumb", { index: Number(b.dataset.crumb) }));
   } else crumbs.innerHTML = "";
 
-  $("presence").innerHTML = (s.presence || []).map((p, i) => `<span class="avatar" style="background:${p.color || "#7ce9ff"}">${(p.email || "?")[0].toUpperCase()}</span>`).join("");
+  $("presence").innerHTML = (s.presence || []).map(p => `<span class="avatar" style="background:${p.color || "#7ce9ff"}">${(p.email || "?")[0].toUpperCase()}</span>`).join("");
 
   if (s.selection?.styles) {
     document.querySelectorAll("[data-style]").forEach(input => {
@@ -107,6 +166,7 @@ function renderFromState(s) {
       ${sel.context.image ? '<button data-context="cover">Cover</button><button data-context="contain">Contain</button><button data-context="alt">Set alt</button>' : ""}
       <button data-context="copy-style">Copy style</button>
       <button data-context="paste-style">Paste style</button>
+      <button data-context="extract-tokens">Extract tokens</button>
       <button data-context="ready">Ready for build</button>
       <button data-context="note">Annotate</button>`;
     ctx.querySelectorAll("[data-context]").forEach(b => b.onclick = () => {
@@ -138,6 +198,7 @@ function renderFromState(s) {
   $("proto-list").innerHTML = (s.prototypeLinks || []).map(l => `<li>${l.label} → ${l.target}</li>`).join("") || "<li>No prototype links</li>";
   $("motion-list").innerHTML = (s.motion || []).map(m => `<li>${m.selector || m.targetId} · ${m.property} ${m.duration}</li>`).join("") || "<li>No motion keyframes</li>";
 
+  if (s.a11ySnapshot) $("a11y-output").textContent = s.a11ySnapshot;
   if (s.devOutput) $("dev-output").textContent = s.devOutput;
 
   if (s.preview) {
@@ -176,10 +237,23 @@ async function refreshAuth() {
   }
 }
 
+async function loadLocalFonts() {
+  const select = $("local-fonts");
+  if (!select || !window.querySelectorLocalFonts) return;
+  try {
+    const fonts = await window.querySelectorLocalFonts();
+    const families = [...new Set(fonts.map(f => f.family))].sort();
+    select.innerHTML = `<option value="">System font picker…</option>${families.map(f => `<option value="${f}">${f}</option>`).join("")}`;
+  } catch {
+    select.innerHTML = '<option value="">Font access denied</option>';
+  }
+}
+
 async function toggleDesignMode() {
   try {
     const res = await send("toggle");
     renderFromState(res);
+    await refreshPanelState();
   } catch {
     if (statusEl) statusEl.textContent = "Reload the page, then try again.";
     else idle.querySelector(".idle-copy").textContent = "Reload the page, then try again.";
@@ -187,19 +261,24 @@ async function toggleDesignMode() {
 }
 
 refreshAuth();
-fetchState().then(renderFromState);
+refreshPanelState();
+loadLocalFonts();
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && (changes.tinkrSession || changes.tinkrUser)) refreshAuth();
 });
 
 chrome.runtime.onMessage.addListener(msg => {
-  if (msg.type === "TINKR_PANEL_UPDATE") renderFromState(msg.state);
+  if (msg.type === "TINKR_PANEL_UPDATE") {
+    tabId().then(id => {
+      if (id === lastTabId) renderFromState(msg.state);
+    });
+  }
 });
 
-chrome.tabs.onActivated.addListener(() => fetchState().then(renderFromState));
+chrome.tabs.onActivated.addListener(() => refreshPanelState());
 chrome.tabs.onUpdated.addListener((tid, info) => {
-  if (info.status === "complete") tabId().then(id => { if (id === tid) fetchState().then(renderFromState); });
+  if (info.status === "complete") tabId().then(id => { if (id === tid) refreshPanelState(); });
 });
 
 signin.onclick = () => chrome.runtime.sendMessage({ type: "TINKR_OPEN_LOGIN" });
@@ -217,6 +296,7 @@ document.querySelectorAll("[data-action]").forEach(b => b.addEventListener("clic
   if (action === "generate") { await send("generate", { prompt: $("prompt").value.trim() }); return; }
   if (action === "run-lab") { await send("runLab", { code: $("lab-code").value, name: $("lab-name").value }); return; }
   if (action === "add-section") { const label = prompt("Section label", "Hero"); if (label) await send("addSection", { label }); return; }
+  if (action === "export-slice") { await send("action", { name: "export-slice" }); return; }
   if (action === "copy-css") {
     const text = $("dev-output")?.textContent || "";
     navigator.clipboard?.writeText(text);
@@ -224,7 +304,7 @@ document.querySelectorAll("[data-action]").forEach(b => b.addEventListener("clic
     return;
   }
   if (action === "present") { await send("setProtoMode", { on: true }); return; }
-  if (action === "toggle-timeline") { /* toolbar handles timeline */ statusEl.textContent = "Use ◇ on floating toolbar for timeline."; return; }
+  if (action === "toggle-timeline") { statusEl.textContent = "Use Motion on floating toolbar for timeline."; return; }
   try { await send("action", { name: action }); } catch { statusEl.textContent = "Command failed — is Design Mode on?"; }
 }));
 
@@ -232,3 +312,7 @@ document.querySelectorAll("[data-add]").forEach(b => b.onclick = () => send("ins
 document.querySelectorAll("[data-autolayout]").forEach(b => b.onclick = () => send("autoLayout", { kind: b.dataset.autolayout }));
 document.querySelectorAll("[data-breakpoint]").forEach(b => b.onclick = () => send("setBreakpoint", { breakpoint: b.dataset.breakpoint }));
 document.querySelectorAll("[data-style]").forEach(input => input.addEventListener("change", () => send("setStyle", { property: input.dataset.style, value: input.value })));
+$("local-fonts")?.addEventListener("change", e => {
+  const family = e.target.value;
+  if (family) send("setStyle", { property: "fontFamily", value: family }).catch(() => {});
+});

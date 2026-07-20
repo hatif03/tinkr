@@ -71,6 +71,36 @@ async function apiRequest(path, init = {}) {
 
 let presenceTimer = null;
 let activeProjectId = null;
+let designTabId = null;
+let panelPort = null;
+
+function setDesignTabId(tabId) {
+  designTabId = tabId ?? null;
+  chrome.storage.session?.set?.({ tinkrDesignTabId: designTabId }).catch(() => {});
+}
+
+async function deactivateTab(tabId, flush = true) {
+  if (!tabId) return;
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: "TINKR_CMD", cmd: "deactivate", payload: { flush } });
+  } catch {
+    /* tab may be gone */
+  }
+  if (designTabId === tabId) setDesignTabId(null);
+}
+
+chrome.runtime.onConnect.addListener(port => {
+  if (port.name !== "tinkr-panel") return;
+  panelPort = port;
+  port.onDisconnect.addListener(() => {
+    panelPort = null;
+    if (designTabId) deactivateTab(designTabId, true);
+  });
+});
+
+async function captureVisiblePng(windowId) {
+  return chrome.tabs.captureVisibleTab(windowId, { format: "png" });
+}
 
 function startPresenceLoop(projectId) {
   activeProjectId = projectId;
@@ -139,6 +169,32 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === "TINKR_OPEN_LOGIN") {
       chrome.tabs.create({ url: `${TINKR_CONFIG.appUrl}/login?source=extension&ext_id=${chrome.runtime.id}` });
       sendResponse({ ok: true });
+      return;
+    }
+    if (message.type === "TINKR_DESIGN_ACTIVE") {
+      setDesignTabId(_sender.tab?.id ?? null);
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.type === "TINKR_DESIGN_INACTIVE") {
+      if (_sender.tab?.id === designTabId) setDesignTabId(null);
+      sendResponse({ ok: true });
+      return;
+    }
+    if (message.type === "TINKR_GET_DESIGN_TAB") {
+      sendResponse({ tabId: designTabId });
+      return;
+    }
+    if (message.type === "TINKR_CAPTURE_SLICE") {
+      const tabId = message.tabId || _sender.tab?.id;
+      if (!tabId) return sendResponse({ ok: false, error: "no tab" });
+      const tab = await chrome.tabs.get(tabId);
+      const dataUrl = await captureVisiblePng(tab.windowId);
+      if (message.download) {
+        const filename = message.filename || `tinkr-slice-${Date.now()}.png`;
+        await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+      }
+      sendResponse({ ok: true, dataUrl });
       return;
     }
   })();
