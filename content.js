@@ -29,8 +29,18 @@
     styles: JSON.parse(JSON.stringify(DEFAULT_STYLES)), components: [],
     tool: TC()?.createDefaultTool?.() || { group: "move", variant: "select", devMode: false, protoMode: false },
     pinCommentMode: false, originalStyles: new Map(), preview: null, _status: "", labOutput: null, labHasOps: null,
-    drawSession: null, panSession: null, scaleSession: null, penNodes: [], timelineOpen: false, presentMode: false
+    drawSession: null, panSession: null, scaleSession: null, penNodes: [], penSession: null,
+    strokeSession: null, vectorEditMode: "move", timelineOpen: false, presentMode: false
   };
+
+  function toolStatusLabel() {
+    const key = `${state.tool.group}:${state.tool.variant}`;
+    return TC().TOOL_LABELS?.[key] || `${state.tool.group} · ${state.tool.variant}`;
+  }
+
+  function inkColor(name, fallback) {
+    return TC().strokeInk?.(name, fallback) || fallback;
+  }
 
   const SKIP = new Set(["SCRIPT", "STYLE", "LINK", "META", "HTML", "BODY"]);
   const storageKey = () => `tinkr:${location.origin}${location.pathname}`;
@@ -119,7 +129,8 @@
       toggleDevMode: () => setDevMode(!state.tool.devMode),
       toggleTimeline: () => { state.timelineOpen = !state.timelineOpen; state.root.querySelector("#tinkr-timeline")?.classList.toggle("tinkr-hide", !state.timelineOpen); renderTimeline(); pushPanelState(); },
       enterPresent: () => { state.presentMode = true; state.tool.protoMode = true; state.panel = "proto"; document.documentElement.requestFullscreen?.(); pushPanelState(); },
-      openResources: () => { state.panel = "design"; status("Resources: use + components in side panel or drag from dashboard."); pushPanelState(); }
+      openResources: () => { state.panel = "design"; status("Resources: use + components in side panel or drag from dashboard."); pushPanelState(); },
+      vectorEdit: (action) => runVectorEdit(action)
     });
     const svg = root.querySelector("#tinkr-vector-layer");
     if (svg) { svg.setAttribute("width", "100%"); svg.setAttribute("height", "100%"); }
@@ -187,13 +198,12 @@
     const draft = state.drawSession?.preview;
     const layers = draft ? [...state.vectorLayers, draft] : state.vectorLayers;
     svg.innerHTML = layers.map(l => TC().renderLayer(l)).join("");
-    if (state.penNodes.length) {
-      const d = TC().bezierToD(state.penNodes);
-      svg.innerHTML += `<path d="${d}" fill="none" stroke="#7ce9ff" stroke-width="2" stroke-dasharray="4 4"/>`;
-      state.penNodes.forEach((n, i) => {
-        svg.innerHTML += `<circle cx="${n.x}" cy="${n.y}" r="4" fill="${i === 0 ? "#b8ff37" : "#7ce9ff"}"/>`;
-      });
+    if (state.strokeSession) {
+      svg.innerHTML += TC().renderStrokePreview(state.strokeSession);
+    } else if (state.penNodes.length) {
+      svg.innerHTML += TC().renderPenPreview(state.penNodes, state.penSession?.nodeIndex ?? -1);
     }
+    window.TinkrToolbar?.syncVectorToolbar?.(state.root, state.selectedVectorId, state.vectorEditMode);
   }
 
   function getPanelState() {
@@ -218,7 +228,7 @@
     }
     return {
       active: state.active, signedIn: state.signedIn, status: state._status, breakpoint: state.breakpoint, panel: state.panel,
-      tool: { ...state.tool }, pinCommentMode: state.pinCommentMode || state.tool.group === "comment",
+      tool: { ...state.tool }, activeToolLabel: toolStatusLabel(), pinCommentMode: state.pinCommentMode || state.tool.group === "comment",
       selection, sections: state.sections, slices: state.slices, tokens: state.tokens,
       styles: state.styles, vectorLayers: state.vectorLayers, prototypeLinks: state.prototypeLinks,
       motion: state.motion, presence: state.presence.slice(0, 6), preview: state.preview,
@@ -230,7 +240,7 @@
   }
 
   function pushPanelState() {
-    window.TinkrToolbar?.syncToolbar(state.root, state.tool);
+    window.TinkrToolbar?.syncToolbar(state.root, { ...state.tool, timelineOpen: state.timelineOpen });
     chrome.runtime.sendMessage({ type: "TINKR_PANEL_UPDATE", state: getPanelState() }).catch(() => {});
   }
 
@@ -242,7 +252,12 @@
     if (group === "region" && variant === "section") addSection(prompt("Section label", "Section") || "Section", state.selected);
     if (group === "region" && variant === "frame") insertComponent("wireframe");
     if (group === "region" && variant === "slice") { state.drawSession = { type: "slice", start: null }; status("Drag to define slice region."); }
+    if (group === "shape" && variant === "image") { insertImageFromPicker(); return; }
+    if (group === "text" && variant === "textPath") { attachTextOnPath(); return; }
     state.penNodes = [];
+    state.penSession = null;
+    state.strokeSession = null;
+    status(toolStatusLabel());
     pushPanelState();
   }
 
@@ -269,8 +284,88 @@
     state.selectedVectorId = id;
     state.selected = null;
     placeBox("#tinkr-selected");
-    status(`Selected vector ${id.slice(0, 8)}.`);
+    const layer = state.vectorLayers.find(v => v.id === id);
+    if (layer?.nodes?.length) state.penNodes = [...layer.nodes];
+    status(`Vector selected · use edit bar to adjust points.`);
+    renderVectorLayer();
     pushPanelState();
+  }
+
+  function runVectorEdit(action) {
+    const layer = state.vectorLayers.find(v => v.id === state.selectedVectorId);
+    if (!layer?.nodes?.length && action !== "close") return status("Select a path with anchor points.");
+    if (action === "move") { state.vectorEditMode = "move"; status("Move point · drag anchors on path."); }
+    if (action === "bend") { state.vectorEditMode = "bend"; status("Bend · drag to set curve handles."); }
+    if (action === "close") {
+      if (state.penNodes.length > 2) finishPenPath(true);
+      else if (layer?.nodes?.length > 2) {
+        layer.d = TC().bezierToD(layer.nodes, true);
+        layer.nodes = [...layer.nodes];
+        renderVectorLayer(); queueSave();
+        status("Path closed.");
+      }
+    }
+    if (action === "delete") {
+      const idx = state.penSession?.nodeIndex ?? layer.nodes.length - 1;
+      layer.nodes = TC().deleteNode(layer.nodes, idx);
+      state.penNodes = [...layer.nodes];
+      layer.d = TC().bezierToD(layer.nodes);
+      if (!layer.nodes.length) {
+        state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id);
+        state.selectedVectorId = null;
+        state.penNodes = [];
+      }
+      renderVectorLayer(); queueSave();
+      status("Point deleted.");
+    }
+    renderVectorLayer(); pushPanelState();
+  }
+
+  function insertImageFromPicker() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*,video/*";
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const href = URL.createObjectURL(file);
+      const layer = TC().createShape("image", window.scrollX + 80, window.scrollY + 80, 240, 160, { href });
+      state.vectorLayers.push(layer);
+      push({ type: "insert_vector", vector: layer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id); renderVectorLayer(); });
+      renderVectorLayer(); queueSave();
+      selectVector(layer.id);
+      status("Image inserted · drag handles to resize on canvas.");
+    };
+    input.click();
+  }
+
+  function attachTextOnPath() {
+    const layer = state.vectorLayers.find(v => v.id === state.selectedVectorId);
+    if (!layer?.d) return status("Select a vector path first (Alt+click).");
+    const text = prompt("Text on path", "Label");
+    if (!text) return;
+    const textLayer = {
+      id: TC().uid(), type: "textPath", d: layer.d, text, fontSize: 14,
+      stroke: TC().defaultStroke?.() || inkColor("--tk-ink-vector", "#a8b4ff"),
+      fill: inkColor("--tk-text", "#f6f7fa"), x: layer.x, y: layer.y, w: layer.w, h: layer.h
+    };
+    state.vectorLayers.push(textLayer);
+    push({ type: "insert_vector", vector: textLayer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== textLayer.id); renderVectorLayer(); });
+    renderVectorLayer(); queueSave();
+    status("Text on path added.");
+    pushPanelState();
+  }
+
+  function sampleColorAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || isTinkr(el)) return status("Eyedropper · click a visible color on the page.");
+    const color = rgbToHex(getComputedStyle(el).color);
+    if (state.selected) setStyle("color", color);
+    const swatch = state.styles.colors.find(c => c.id === "sampled");
+    if (swatch) swatch.value = color;
+    else state.styles.colors.push({ id: "sampled", name: "Sampled", value: color });
+    status(`Sampled ${color}${state.selected ? " · applied to selection" : ""}.`);
+    queueSave(); pushPanelState();
   }
 
   function selectCrumb(index) {
@@ -564,13 +659,35 @@
   }
 
   function finishPenPath(closed = false) {
-    if (state.penNodes.length < 2) { state.penNodes = []; renderVectorLayer(); return; }
+    if (state.penNodes.length < 2) { state.penNodes = []; state.penSession = null; renderVectorLayer(); return; }
     const d = TC().bezierToD(state.penNodes, closed);
     const xs = state.penNodes.map(n => n.x), ys = state.penNodes.map(n => n.y);
-    const layer = { id: TC().uid(), type: "path", x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), fill: closed ? "rgba(124,233,255,0.15)" : "none", stroke: "#7ce9ff", d, nodes: [...state.penNodes] };
+    const stroke = TC().defaultStroke?.() || inkColor("--tk-ink-vector", "#a8b4ff");
+    const layer = {
+      id: TC().uid(), type: "path", x: Math.min(...xs), y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
+      fill: closed ? "rgba(168,180,255,0.15)" : "none", stroke, d, nodes: [...state.penNodes]
+    };
     state.vectorLayers.push(layer);
     push({ type: "insert_vector", vector: layer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id); renderVectorLayer(); });
-    state.penNodes = []; renderVectorLayer(); queueSave(); status("Path created.");
+    state.penNodes = []; state.penSession = null; renderVectorLayer(); queueSave(); status("Path created.");
+  }
+
+  function finishPencilStroke() {
+    if (!state.strokeSession) return;
+    const result = TC().finishStroke(state.strokeSession);
+    state.strokeSession = null;
+    if (!result.d || result.points.length < 2) { renderVectorLayer(); return; }
+    const xs = result.points.map(p => p.x), ys = result.points.map(p => p.y);
+    const stroke = inkColor("--tk-ink-pencil", "#9aa4b8");
+    const layer = {
+      id: TC().uid(), type: "path", x: Math.min(...xs), y: Math.min(...ys),
+      w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys),
+      fill: "none", stroke, d: result.d, nodes: result.points.map(p => ({ x: p.x, y: p.y }))
+    };
+    state.vectorLayers.push(layer);
+    push({ type: "insert_vector", vector: layer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id); renderVectorLayer(); });
+    renderVectorLayer(); queueSave(); status("Pencil stroke committed.");
   }
 
   async function generate(promptText) {
@@ -671,10 +788,27 @@
       state.panSession = { x: event.clientX, y: event.clientY, vx: state.viewport.x, vy: state.viewport.y };
       event.preventDefault(); return;
     }
+    if (state.tool.group === "draw" && state.tool.variant === "eyedropper") {
+      sampleColorAt(event.clientX, event.clientY);
+      event.preventDefault(); return;
+    }
+    if (state.tool.group === "draw" && state.tool.variant === "pencil") {
+      state.strokeSession = TC().createStrokeSession("pencil");
+      TC().addPoint(state.strokeSession, event.clientX, event.clientY);
+      event.preventDefault(); return;
+    }
     if (state.tool.group === "draw" && state.tool.variant === "pen") {
       const x = event.clientX, y = event.clientY;
       if (event.detail === 2) { finishPenPath(true); return; }
-      state.penNodes.push({ x, y }); renderVectorLayer(); event.preventDefault(); return;
+      const hit = TC().hitTestNode(state.penNodes, x, y);
+      if (hit >= 0) {
+        state.penSession = { nodeIndex: hit, drag: state.vectorEditMode === "bend" ? "bend" : "move", startX: x, startY: y };
+      } else {
+        const node = { x, y };
+        state.penNodes.push(node);
+        state.penSession = { nodeIndex: state.penNodes.length - 1, drag: "bend", startX: x, startY: y, origin: { ...node } };
+      }
+      renderVectorLayer(); event.preventDefault(); return;
     }
     if (TC().isCreationTool(state.tool) || state.drawSession?.type === "slice") {
       state.drawSession = { ...(state.drawSession || {}), startX: event.clientX, startY: event.clientY, active: true };
@@ -706,8 +840,26 @@
       state.drawSession.preview = TC().createShape(state.tool.variant === "rect" ? "rect" : state.tool.variant, x, y, w, h, { fill: "rgba(124,233,255,0.12)" });
       renderVectorLayer(); return;
     }
-    if (state.tool.group === "draw" && state.tool.variant === "pencil") {
-      state.penNodes.push({ x: event.clientX, y: event.clientY });
+    if (state.strokeSession) {
+      TC().schedulePoint(state.strokeSession, event.clientX, event.clientY, () => renderVectorLayer());
+      return;
+    }
+    if (state.penSession && state.tool.group === "draw" && state.tool.variant === "pen") {
+      const idx = state.penSession.nodeIndex;
+      const node = state.penNodes[idx];
+      if (!node) return;
+      const x = event.clientX, y = event.clientY;
+      if (state.penSession.drag === "move" || state.vectorEditMode === "move") {
+        TC().moveNode(state.penNodes, idx, x, y);
+        const layer = state.vectorLayers.find(v => v.id === state.selectedVectorId);
+        if (layer) { layer.nodes = [...state.penNodes]; layer.d = TC().bezierToD(state.penNodes); }
+      } else {
+        node.cp2x = x; node.cp2y = y;
+        if (idx > 0) {
+          const prev = state.penNodes[idx - 1];
+          prev.cp2x = x; prev.cp2y = y;
+        }
+      }
       renderVectorLayer(); return;
     }
     if (state.scaleSession) {
@@ -751,10 +903,14 @@
       state.drawSession = null; state.drawSession?.preview && delete state.drawSession.preview;
       renderVectorLayer(); return;
     }
-    if (state.tool.group === "draw" && state.tool.variant === "pencil" && state.penNodes.length > 2) {
-      const simplified = TC().simplifyPencil(state.penNodes.map(n => [n.x, n.y]));
-      state.penNodes = simplified.map(([x, y]) => ({ x, y }));
-      finishPenPath(false); return;
+    if (state.strokeSession) {
+      finishPencilStroke(); return;
+    }
+    if (state.penSession) {
+      state.penSession = null;
+      const layer = state.vectorLayers.find(v => v.id === state.selectedVectorId);
+      if (layer?.nodes) { layer.nodes = [...state.penNodes]; layer.d = TC().bezierToD(state.penNodes); queueSave(); }
+      return;
     }
     if (state.scaleSession) {
       const el = state.scaleSession.el;
@@ -802,15 +958,19 @@
     if (TC().shouldPan(state.tool)) return;
     if (!TC().shouldSelectElements(state.tool) && state.tool.variant !== "scale") return;
     event.preventDefault(); event.stopPropagation();
+    if (state.tool.group === "draw" && state.tool.variant === "eyedropper") {
+      sampleColorAt(event.clientX, event.clientY); return;
+    }
     const hitVector = [...state.vectorLayers].reverse().find(v => TC().hitTest(v, event.clientX, event.clientY));
-    if (hitVector && event.altKey) { selectVector(hitVector.id); return; }
+    if (hitVector && (event.altKey || state.tool.group === "draw")) { selectVector(hitVector.id); return; }
     select(event.altKey ? event.target.parentElement : event.target);
   }
 
   function onKey(event) {
     if (!state.active) return;
     if (event.key === "Escape") {
-      if (state.penNodes.length) { state.penNodes = []; renderVectorLayer(); return; }
+      if (state.strokeSession) { state.strokeSession = null; renderVectorLayer(); return; }
+      if (state.penNodes.length) { state.penNodes = []; state.penSession = null; renderVectorLayer(); return; }
       if (state.tool.devMode) { setDevMode(false); return; }
       deactivate(); return;
     }
@@ -822,6 +982,9 @@
     if (event.key.toLowerCase() === "h") setTool("move", "hand");
     if (event.key.toLowerCase() === "k") setTool("move", "scale");
     if (event.key.toLowerCase() === "p" && !event.shiftKey) setTool("draw", "pen");
+    if (event.key.toLowerCase() === "p" && event.shiftKey) setTool("draw", "pencil");
+    if (event.key.toLowerCase() === "i") setTool("draw", "eyedropper");
+    if (event.key.toLowerCase() === "c" && !mod) setTool("comment", "pin");
     if (event.key.toLowerCase() === "r") setTool("shape", "rect");
     if (event.key.toLowerCase() === "t") setTool("text", "text");
     if (state.selected && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key) && TC().shouldSelectElements(state.tool)) {

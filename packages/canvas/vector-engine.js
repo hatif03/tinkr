@@ -1,6 +1,16 @@
 (() => {
   const uid = () => crypto.randomUUID();
 
+  function ink(name, fallback) {
+    const root = document.getElementById("tinkr-root");
+    if (!root) return fallback;
+    const v = getComputedStyle(root).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  function defaultStroke() { return ink("--tk-ink-vector", "#a8b4ff"); }
+  function defaultFill() { return "rgba(168,180,255,0.15)"; }
+
   function starPoints(cx, cy, outerR, innerR, points = 5) {
     const pts = [];
     for (let i = 0; i < points * 2; i++) {
@@ -45,27 +55,19 @@
   }
 
   function simplifyPencil(points, tolerance = 2) {
-    if (points.length <= 2) return points;
-    const out = [points[0]];
-    for (let i = 1; i < points.length - 1; i++) {
-      const [x0, y0] = out[out.length - 1];
-      const [x1, y1] = points[i];
-      if (Math.hypot(x1 - x0, y1 - y0) >= tolerance) out.push(points[i]);
-    }
-    out.push(points[points.length - 1]);
-    return out;
+    return window.TinkrCanvas?.smoothPolyline
+      ? window.TinkrCanvas.smoothPolyline(points.map(([x, y]) => ({ x, y })), tolerance).map(p => [p.x, p.y])
+      : points;
   }
 
   function createShape(type, x, y, w, h, opts = {}) {
-    const fill = opts.fill || "rgba(124,233,255,0.2)";
-    const stroke = opts.stroke || "#7ce9ff";
+    const fill = opts.fill || defaultFill();
+    const stroke = opts.stroke || defaultStroke();
     const id = uid();
     let d = "";
     let points = null;
     const cx = x + w / 2, cy = y + h / 2;
-    if (type === "rect") {
-      return { id, type, x, y, w, h, fill, stroke, d: null };
-    }
+    if (type === "rect") return { id, type, x, y, w, h, fill, stroke, d: null };
     if (type === "ellipse") {
       d = `M ${cx - w / 2} ${cy} A ${w / 2} ${h / 2} 0 1 0 ${cx + w / 2} ${cy} A ${w / 2} ${h / 2} 0 1 0 ${cx - w / 2} ${cy}`;
       return { id, type, x, y, w, h, fill, stroke, d };
@@ -89,40 +91,75 @@
       points = starPoints(cx, cy, Math.min(w, h) / 2, Math.min(w, h) / 4);
       return { id, type, x, y, w, h, fill, stroke, d: pointsToD(points), points };
     }
+    if (type === "image") {
+      return { id, type: "image", x, y, w, h, fill: "none", stroke, href: opts.href || "", d: null };
+    }
     return { id, type: "rect", x, y, w, h, fill, stroke };
   }
 
   function renderLayer(layer) {
+    const sw = ink("--tk-stroke-width-pencil", "2");
+    const cap = 'stroke-linecap="round" stroke-linejoin="round"';
     if (layer.type === "rect") {
-      return `<rect data-vector-id="${layer.id}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}" fill="${layer.fill}" stroke="${layer.stroke}" stroke-width="2"/>`;
+      return `<rect data-vector-id="${layer.id}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}" fill="${layer.fill}" stroke="${layer.stroke}" stroke-width="${sw}" ${cap}/>`;
+    }
+    if (layer.type === "image" && layer.href) {
+      return `<image data-vector-id="${layer.id}" href="${layer.href}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}"/>`;
+    }
+    if (layer.type === "textPath" && layer.d) {
+      return `<path data-vector-id="${layer.id}" id="path-${layer.id}" d="${layer.d}" fill="none" stroke="${layer.stroke || defaultStroke()}" stroke-width="1" opacity="0.3"/>
+        <text data-vector-id="${layer.id}" fill="${layer.fill || ink('--tk-text', '#f6f7fa')}" font-size="${layer.fontSize || 14}" font-family="Inter, sans-serif">
+          <textPath href="#path-${layer.id}" startOffset="0">${layer.text || "Text on path"}</textPath>
+        </text>`;
     }
     if (layer.d) {
-      return `<path data-vector-id="${layer.id}" d="${layer.d}" fill="${layer.fill || "none"}" stroke="${layer.stroke}" stroke-width="2"/>`;
+      return `<path data-vector-id="${layer.id}" d="${layer.d}" fill="${layer.fill || "none"}" stroke="${layer.stroke}" stroke-width="${sw}" ${cap}/>`;
     }
     return "";
   }
 
+  function hitTestNode(nodes, px, py, radius = 8) {
+    if (!nodes?.length) return -1;
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      if (Math.hypot(nodes[i].x - px, nodes[i].y - py) <= radius) return i;
+    }
+    return -1;
+  }
+
+  function moveNode(nodes, index, x, y) {
+    if (index < 0 || !nodes[index]) return nodes;
+    const n = nodes[index];
+    const dx = x - n.x, dy = y - n.y;
+    n.x = x; n.y = y;
+    if (n.cp1x != null) { n.cp1x += dx; n.cp1y += dy; }
+    if (n.cp2x != null) { n.cp2x += dx; n.cp2y += dy; }
+    return nodes;
+  }
+
+  function deleteNode(nodes, index) {
+    if (index < 0) return nodes;
+    return nodes.filter((_, i) => i !== index);
+  }
+
   function hitTest(layer, px, py) {
-    if (layer.type === "rect") {
+    if (layer.type === "rect" || layer.type === "image") {
       return px >= layer.x && px <= layer.x + layer.w && py >= layer.y && py <= layer.y + layer.h;
     }
     if (layer.points?.length) {
       const xs = layer.points.map(p => p[0]), ys = layer.points.map(p => p[1]);
-      const minX = Math.min(...xs) - 8, maxX = Math.max(...xs) + 8;
-      const minY = Math.min(...ys) - 8, maxY = Math.max(...ys) + 8;
-      return px >= minX && px <= maxX && py >= minY && py <= maxY;
+      return px >= Math.min(...xs) - 8 && px <= Math.max(...xs) + 8 && py >= Math.min(...ys) - 8 && py <= Math.max(...ys) + 8;
     }
     return px >= layer.x && px <= layer.x + (layer.w || 0) && py >= layer.y && py <= layer.y + (layer.h || 0);
   }
 
   function booleanUnion(a, b) {
     if (!a || !b) return a || b;
-    const merged = { ...a, id: uid(), type: "path", d: `${a.d || pointsToD(a.points || [])} ${b.d || pointsToD(b.points || [])}`, fill: a.fill, stroke: a.stroke };
-    return merged;
+    return { ...a, id: uid(), type: "path", d: `${a.d || pointsToD(a.points || [])} ${b.d || pointsToD(b.points || [])}`, fill: a.fill, stroke: a.stroke };
   }
 
   window.TinkrCanvas = window.TinkrCanvas || {};
   Object.assign(window.TinkrCanvas, {
-    uid, createShape, renderLayer, hitTest, bezierToD, pointsToD, simplifyPencil, booleanUnion, starPoints, polygonPoints
+    uid, createShape, renderLayer, hitTest, bezierToD, pointsToD, simplifyPencil, booleanUnion,
+    starPoints, polygonPoints, hitTestNode, moveNode, deleteNode, defaultStroke, defaultFill
   });
 })();
