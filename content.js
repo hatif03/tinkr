@@ -30,7 +30,8 @@
     tool: TC()?.createDefaultTool?.() || { group: "move", variant: "select", devMode: false, protoMode: false },
     pinCommentMode: false, originalStyles: new Map(), preview: null, _status: "", labOutput: null, labHasOps: null,
     drawSession: null, panSession: null, scaleSession: null, penNodes: [], penSession: null,
-    strokeSession: null, vectorEditMode: "move", timelineOpen: false, presentMode: false
+    strokeSession: null, vectorEditMode: "move", timelineOpen: false, presentMode: false,
+    toolbarCleanup: null, spaceHand: false, toolBeforeSpace: null, onPageHide: null
   };
 
   function toolStatusLabel() {
@@ -81,17 +82,22 @@
   function rgbToHex(value) { const m = value?.match(/\d+/g); return m?.length >= 3 ? `#${m.slice(0, 3).map(n => Number(n).toString(16).padStart(2, "0")).join("")}` : "#000000"; }
 
   function cursorState(el) {
+    if (state.spaceHand) return state.panSession ? "grabbing" : "hand";
+    const toolKey = `${state.tool.group}:${state.tool.variant}`;
+    const mapped = TC().CURSOR_BY_TOOL?.[toolKey];
+    if (mapped) {
+      if (mapped === "hand") return state.panSession ? "grabbing" : "hand";
+      if (mapped === "scale" && state.scaleSession) return "scale";
+      if (mapped === "move" && state.drag) return "grabbing";
+      return mapped;
+    }
     if (state.tool.devMode) return "inspect";
     if (state.tool.group === "comment" || state.pinCommentMode) return "comment";
-    if (TC().shouldPan(state.tool)) return state.panSession ? "grabbing" : "hand";
-    if (state.scaleSession || TC().shouldScale(state.tool)) return "scale";
     if (state.drag) return "grabbing";
-    if (state.tool.group === "draw") return state.tool.variant === "pen" ? "pen" : "create";
-    if (TC().isCreationTool(state.tool)) return "create";
     if (unsafeTarget(el)) return "locked";
     if (imageTarget(el)) return "image";
-    if (textTarget(el)) return "text";
-    return el === state.selected ? "selected" : "";
+    if (textTarget(el) && state.tool.group === "move") return "text";
+    return el === state.selected ? "selected" : "move";
   }
 
   function updateCursor(event, el) {
@@ -100,10 +106,12 @@
     cursor.style.left = `${event.clientX}px`; cursor.style.top = `${event.clientY}px`;
     label.style.left = `${event.clientX}px`; label.style.top = `${event.clientY}px`;
     cursor.className = `tinkr-cursor ${cursorState(el)}`;
+    const toolLabel = toolStatusLabel();
     if (state.tool.devMode) label.textContent = "Inspect values · read only";
     else if (state.tool.group === "comment") label.textContent = "Click to pin a comment";
-    else if (TC().shouldPan(state.tool)) label.textContent = state.panSession ? "Panning canvas" : "Hand tool";
-    else if (TC().shouldScale(state.tool)) label.textContent = state.selected ? "Drag a handle to scale" : "Select a layer to scale";
+    else if (state.spaceHand || TC().shouldPan(state.tool)) label.textContent = state.panSession ? "Panning canvas" : toolLabel;
+    else if (TC().shouldScale(state.tool)) label.textContent = state.selected ? "Drag a handle to scale" : toolLabel;
+    else if (state.tool.group === "draw" || TC().isCreationTool(state.tool)) label.textContent = toolLabel;
     else if (unsafeTarget(el)) label.textContent = "Protected content · visual only";
     else if (el) { const s = getComputedStyle(el), r = el.getBoundingClientRect(); label.textContent = `${el.tagName.toLowerCase()} · ${s.display} · ${Math.round(r.width)} × ${Math.round(r.height)}`; }
     if (state.projectId && state.signedIn) {
@@ -124,7 +132,7 @@
       <div class="tinkr-box" id="tinkr-hover"></div><div class="tinkr-box selected tinkr-hide" id="tinkr-selected"></div>`;
     const sandbox = document.createElement("iframe"); sandbox.src = chrome.runtime.getURL("sandbox.html"); sandbox.style.display = "none"; sandbox.id = "tinkr-sandbox"; root.append(sandbox);
     document.documentElement.append(root); state.root = root;
-    window.TinkrToolbar?.mountToolbar(root, {
+    const mount = window.TinkrToolbar?.mountToolbar(root, {
       setTool: (g, v) => setTool(g, v),
       toggleDevMode: () => setDevMode(!state.tool.devMode),
       toggleTimeline: () => { state.timelineOpen = !state.timelineOpen; state.root.querySelector("#tinkr-timeline")?.classList.toggle("tinkr-hide", !state.timelineOpen); renderTimeline(); pushPanelState(); },
@@ -132,6 +140,7 @@
       openResources: () => { state.panel = "design"; status("Resources: use + components in side panel or drag from dashboard."); pushPanelState(); },
       vectorEdit: (action) => runVectorEdit(action)
     });
+    state.toolbarCleanup = mount?.cleanup;
     const svg = root.querySelector("#tinkr-vector-layer");
     if (svg) { svg.setAttribute("width", "100%"); svg.setAttribute("height", "100%"); }
   }
@@ -235,6 +244,7 @@
       labOutput: state.labOutput, labHasOps: state.labHasOps,
       devOutput: state.tool.devMode ? getDevOutput() : null,
       devSpec: state.tool.devMode ? getDevSpec() : null,
+      a11ySnapshot: state.selected ? getA11ySnapshot(state.selected) : null,
       timelineOpen: state.timelineOpen, viewport: state.viewport
     };
   }
@@ -254,6 +264,7 @@
     if (group === "region" && variant === "slice") { state.drawSession = { type: "slice", start: null }; status("Drag to define slice region."); }
     if (group === "shape" && variant === "image") { insertImageFromPicker(); return; }
     if (group === "text" && variant === "textPath") { attachTextOnPath(); return; }
+    if (group === "draw" && variant === "eyedropper") { openScreenEyedropper(); return; }
     state.penNodes = [];
     state.penSession = null;
     state.strokeSession = null;
@@ -276,8 +287,9 @@
 
   function select(el) {
     if (!el || SKIP.has(el.tagName) || isTinkr(el)) return;
-    if (state.tool.devMode) { state.selected = el; placeBox("#tinkr-selected", el); renderDevOverlay(); status(`Inspecting ${el.tagName.toLowerCase()}.`); return; }
+    if (state.tool.devMode) { state.selected = el; placeBox("#tinkr-selected", el); renderDevOverlay(); status(`Inspecting ${el.tagName.toLowerCase()}.`); pushPanelState(); return; }
     state.selected = el; placeBox("#tinkr-selected", el); status(`Selected ${el.tagName.toLowerCase()}.`);
+    pushPanelState();
   }
 
   function selectVector(id) {
@@ -356,16 +368,88 @@
     pushPanelState();
   }
 
-  function sampleColorAt(x, y) {
-    const el = document.elementFromPoint(x, y);
-    if (!el || isTinkr(el)) return status("Eyedropper · click a visible color on the page.");
-    const color = rgbToHex(getComputedStyle(el).color);
+  function applySampledColor(color) {
+    if (!color) return;
     if (state.selected) setStyle("color", color);
     const swatch = state.styles.colors.find(c => c.id === "sampled");
     if (swatch) swatch.value = color;
     else state.styles.colors.push({ id: "sampled", name: "Sampled", value: color });
     status(`Sampled ${color}${state.selected ? " · applied to selection" : ""}.`);
     queueSave(); pushPanelState();
+  }
+
+  function sampleColorAt(x, y) {
+    const el = document.elementFromPoint(x, y);
+    if (!el || isTinkr(el)) return status("Eyedropper · click a visible color on the page.");
+    applySampledColor(rgbToHex(getComputedStyle(el).color));
+  }
+
+  async function openScreenEyedropper() {
+    if (!window.EyeDropper) {
+      status("Screen eyedropper unavailable — click an element to sample DOM color.");
+      return;
+    }
+    try {
+      const result = await new EyeDropper().open();
+      applySampledColor(result.sRGBHex);
+    } catch {
+      status("Eyedropper cancelled.");
+      pushPanelState();
+    }
+  }
+
+  function luminance(hex) {
+    const n = hex.replace("#", "");
+    if (n.length < 6) return 0;
+    const [r, g, b] = [0, 2, 4].map(i => parseInt(n.slice(i, i + 2), 16) / 255);
+    const lin = [r, g, b].map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2];
+  }
+
+  function contrastRatio(fg, bg) {
+    const l1 = luminance(fg) + 0.05, l2 = luminance(bg) + 0.05;
+    return (Math.max(l1, l2) / Math.min(l1, l2)).toFixed(2);
+  }
+
+  function getA11ySnapshot(el) {
+    if (!el) return "";
+    const s = getComputedStyle(el);
+    const role = el.getAttribute("role") || el.tagName.toLowerCase();
+    const name = el.getAttribute("aria-label") || el.getAttribute("alt") || (el.innerText || "").trim().slice(0, 80);
+    const fg = rgbToHex(s.color), bg = rgbToHex(s.backgroundColor);
+    const ratio = contrastRatio(fg, bg);
+    const pass = Number(ratio) >= 4.5 ? "AA pass" : "low contrast";
+    return `Role: ${role}\nName: ${name || "(empty)"}\nContrast: ${ratio}:1 (${pass})\nTab index: ${el.tabIndex}\nAlt: ${el.getAttribute("alt") || "—"}`;
+  }
+
+  function extractTokensFromSelection() {
+    const el = state.selected;
+    if (!el) return status("Select an element to extract tokens.");
+    const s = getComputedStyle(el);
+    state.tokens["--tinkr-primary"] = rgbToHex(s.color);
+    state.tokens["--tinkr-surface"] = rgbToHex(s.backgroundColor);
+    state.tokens["--tinkr-radius"] = s.borderRadius || state.tokens["--tinkr-radius"];
+    state.tokens["--tinkr-gap"] = s.gap || state.tokens["--tinkr-gap"];
+    applyTokens();
+    queueSave();
+    status("Extracted color, surface, radius, and gap from selection.");
+    pushPanelState();
+  }
+
+  async function exportSliceCapture() {
+    const res = await chrome.runtime.sendMessage({
+      type: "TINKR_CAPTURE_SLICE",
+      download: true,
+      filename: `tinkr-${document.title.slice(0, 40).replace(/[^\w.-]+/g, "-")}-${Date.now()}.png`
+    });
+    status(res?.ok ? "Viewport PNG exported." : `Capture failed: ${res?.error || "unknown"}`);
+    pushPanelState();
+  }
+
+  function teardownInjectedStyles() {
+    document.getElementById("tinkr-tokens")?.remove();
+    document.getElementById("tinkr-motion-styles")?.remove();
+    document.querySelectorAll('style[id^="tinkr-responsive-"]').forEach(n => n.remove());
   }
 
   function selectCrumb(index) {
@@ -388,6 +472,7 @@
     if (action === "note" && value) addLocalComment(value, el);
     if (action === "apply-text-style" && value) { const st = state.styles.text.find(t => t.id === value); if (st) Object.entries({ fontFamily: st.fontFamily, fontSize: st.fontSize, fontWeight: st.fontWeight, lineHeight: st.lineHeight }).forEach(([k,v]) => setStyle(k, v)); }
     if (action === "apply-color-style" && value) { const c = state.styles.colors.find(t => t.id === value); if (c) setStyle("color", c.value); }
+    if (action === "extract-tokens") extractTokensFromSelection();
     if (action === "boolean-union" && state.selectedVectorId) booleanOp("union");
   }
 
@@ -675,7 +760,7 @@
 
   function finishPencilStroke() {
     if (!state.strokeSession) return;
-    const result = TC().finishStroke(state.strokeSession);
+    const result = TC().finishStroke(state.strokeSession, { fidelity: "high" });
     state.strokeSession = null;
     if (!result.d || result.points.length < 2) { renderVectorLayer(); return; }
     const xs = result.points.map(p => p.x), ys = result.points.map(p => p.y);
@@ -754,12 +839,13 @@
       "add-section": () => {}, "pin-comment": () => setTool("comment", "pin"),
       "toggle-viewport": () => { applyViewport(); status("Viewport transform applied."); },
       "add-hotspot": () => addHotspot(prompt("Scroll target selector or URL", "")),
-      "add-motion": addMotionPreset, "boolean-union": () => booleanOp("union")
+      "add-motion": addMotionPreset, "boolean-union": () => booleanOp("union"), "export-slice": exportSliceCapture
     })[name]?.();
   }
 
-  function handleCmd(cmd, payload) {
-    if (cmd === "toggle") { state.active ? deactivate() : activate(); return getPanelState(); }
+  async function handleCmd(cmd, payload) {
+    if (cmd === "toggle") return state.active ? deactivate(payload) : activate();
+    if (cmd === "deactivate") return deactivate(payload);
     if (cmd === "setPanel") { state.panel = payload.panel || "design"; if (payload.panel === "inspect") setDevMode(true); pushPanelState(); return getPanelState(); }
     if (cmd === "setTool") { setTool(payload.group, payload.variant); return getPanelState(); }
     if (cmd === "setDevMode") { setDevMode(Boolean(payload.on)); return getPanelState(); }
@@ -784,7 +870,7 @@
 
   function startDrag(event) {
     if (isTinkr(event.target)) return;
-    if (TC().shouldPan(state.tool)) {
+    if (state.spaceHand || TC().shouldPan(state.tool)) {
       state.panSession = { x: event.clientX, y: event.clientY, vx: state.viewport.x, vy: state.viewport.y };
       event.preventDefault(); return;
     }
@@ -841,7 +927,7 @@
       renderVectorLayer(); return;
     }
     if (state.strokeSession) {
-      TC().schedulePoint(state.strokeSession, event.clientX, event.clientY, () => renderVectorLayer());
+      TC().schedulePoint(state.strokeSession, event.clientX, event.clientY, () => renderVectorLayer(), { shiftKey: event.shiftKey });
       return;
     }
     if (state.penSession && state.tool.group === "draw" && state.tool.variant === "pen") {
@@ -953,9 +1039,10 @@
       const body = prompt("Pinned comment"); if (body) addLocalComment(body, document.elementFromPoint(event.clientX, event.clientY) || document.body);
       state.pinCommentMode = false; state.tool.group = "move"; state.tool.variant = "select"; pushPanelState(); return;
     }
+    if (state.spaceHand) return;
     if (state.tool.group === "draw" && state.tool.variant === "pen") return;
     if (TC().isCreationTool(state.tool)) return;
-    if (TC().shouldPan(state.tool)) return;
+    if (state.spaceHand || TC().shouldPan(state.tool)) return;
     if (!TC().shouldSelectElements(state.tool) && state.tool.variant !== "scale") return;
     event.preventDefault(); event.stopPropagation();
     if (state.tool.group === "draw" && state.tool.variant === "eyedropper") {
@@ -972,20 +1059,34 @@
       if (state.strokeSession) { state.strokeSession = null; renderVectorLayer(); return; }
       if (state.penNodes.length) { state.penNodes = []; state.penSession = null; renderVectorLayer(); return; }
       if (state.tool.devMode) { setDevMode(false); return; }
-      deactivate(); return;
+      deactivate({ flush: true }); return;
     }
     if (event.target.matches("input,textarea,[contenteditable='true']")) return;
     const mod = event.ctrlKey || event.metaKey;
     if (mod && event.key.toLowerCase() === "z") { event.preventDefault(); undo(); return; }
     if ((event.key === "Delete" || event.key === "Backspace") && !state.tool.devMode) { event.preventDefault(); hide(); return; }
+    if (event.code === "Space" && !event.repeat) {
+      if (!state.spaceHand) state.spaceHand = true;
+      event.preventDefault();
+      pushPanelState();
+      return;
+    }
+    if (event.shiftKey && event.key.toLowerCase() === "d") { event.preventDefault(); setDevMode(!state.tool.devMode); return; }
+    if (event.shiftKey && event.key.toLowerCase() === "i") { event.preventDefault(); state.panel = "design"; status("Resources: use + components in side panel or drag from dashboard."); pushPanelState(); return; }
+    if (event.shiftKey && event.key.toLowerCase() === "p") setTool("draw", "pencil");
+    else if (event.key.toLowerCase() === "p") setTool("draw", "pen");
+    if (event.shiftKey && event.key.toLowerCase() === "s") setTool("region", "section");
+    else if (event.key.toLowerCase() === "s") setTool("region", "slice");
+    if (event.shiftKey && event.key.toLowerCase() === "l") setTool("shape", "arrow");
+    else if (event.key.toLowerCase() === "l") setTool("shape", "line");
     if (event.key.toLowerCase() === "v") setTool("move", "select");
     if (event.key.toLowerCase() === "h") setTool("move", "hand");
     if (event.key.toLowerCase() === "k") setTool("move", "scale");
-    if (event.key.toLowerCase() === "p" && !event.shiftKey) setTool("draw", "pen");
-    if (event.key.toLowerCase() === "p" && event.shiftKey) setTool("draw", "pencil");
     if (event.key.toLowerCase() === "i") setTool("draw", "eyedropper");
     if (event.key.toLowerCase() === "c" && !mod) setTool("comment", "pin");
     if (event.key.toLowerCase() === "r") setTool("shape", "rect");
+    if (event.key.toLowerCase() === "f") setTool("region", "frame");
+    if (event.key.toLowerCase() === "o") setTool("shape", "ellipse");
     if (event.key.toLowerCase() === "t") setTool("text", "text");
     if (state.selected && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key) && TC().shouldSelectElements(state.tool)) {
       event.preventDefault(); const step = event.shiftKey ? 8 : 1; const property = /Left|Right/.test(event.key) ? "left" : "top"; const direction = /Up|Left/.test(event.key) ? -1 : 1;
@@ -1015,6 +1116,22 @@
     else if (importToken) await importSharedRevision(importToken);
   }
 
+  function onKeyUp(event) {
+    if (!state.active || event.code !== "Space") return;
+    if (state.spaceHand) {
+      state.spaceHand = false;
+      if (state.panSession) { state.panSession = null; queueSave(); }
+      pushPanelState();
+    }
+  }
+
+  function onPageHide() {
+    if (!state.active) return;
+    clearTimeout(state.autosaveTimer);
+    clearTimeout(state.cloudSyncTimer);
+    save().then(() => deactivate({ silent: true }));
+  }
+
   async function activate() {
     if (state.active) return getPanelState();
     createOverlay();
@@ -1023,11 +1140,15 @@
     document.addEventListener("mousemove", onMove, true);
     document.addEventListener("click", onClick, true);
     document.addEventListener("keydown", onKey, true);
+    document.addEventListener("keyup", onKeyUp, true);
     document.addEventListener("mousedown", startDrag, true);
     document.addEventListener("mouseup", endDrag, true);
     document.addEventListener("mousemove", moveDrag, true);
     document.addEventListener("wheel", onWheel, { passive: false, capture: true });
     window.addEventListener("scroll", onScroll, true);
+    state.onPageHide = onPageHide;
+    window.addEventListener("pagehide", state.onPageHide);
+    window.addEventListener("beforeunload", state.onPageHide);
     state.observer = new MutationObserver(() => { clearTimeout(state.settleTimer); state.settleTimer = setTimeout(() => { if (state.active) state.patches.forEach(p => applyPatch(p)); }, 160); });
     state.observer.observe(document.body, { childList: true, subtree: true });
     await bootFromUrl();
@@ -1035,33 +1156,68 @@
     const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
     state.signedIn = auth?.signedIn;
     if (state.projectId && state.signedIn) chrome.runtime.sendMessage({ type: "TINKR_REALTIME_JOIN", projectId: state.projectId });
+    chrome.runtime.sendMessage({ type: "TINKR_DESIGN_ACTIVE" }).catch(() => {});
     pushPanelState();
     status(state.signedIn ? "Design Mode · cloud sync enabled." : "Design Mode · local only until sign-in.");
     return getPanelState();
   }
 
-  function deactivate() {
+  async function deactivate(opts = {}) {
     if (!state.active) return getPanelState();
+    const { flush = false, silent = false } = opts;
+    if (flush) {
+      clearTimeout(state.autosaveTimer);
+      clearTimeout(state.cloudSyncTimer);
+      await save();
+    }
     state.active = false;
+    state.spaceHand = false;
+    state.toolBeforeSpace = null;
+    state.strokeSession = null;
+    state.penSession = null;
+    state.panSession = null;
+    state.scaleSession = null;
+    state.drawSession = null;
     document.body.classList.remove("tinkr-design-mode", "tinkr-viewport-mode", "tinkr-dev-mode");
     document.body.style.transform = "";
     state.observer?.disconnect();
+    state.observer = null;
+    clearTimeout(state.autosaveTimer);
+    clearTimeout(state.cloudSyncTimer);
+    clearTimeout(state.settleTimer);
+    clearTimeout(state.cursorTimer);
     window.removeEventListener("scroll", onScroll, true);
+    window.removeEventListener("pagehide", state.onPageHide);
+    window.removeEventListener("beforeunload", state.onPageHide);
     document.removeEventListener("wheel", onWheel, true);
-    ["mousemove", "click", "keydown", "mousedown", "mouseup"].forEach(type => document.removeEventListener(type, ({ mousemove: onMove, click: onClick, keydown: onKey, mousedown: startDrag, mouseup: endDrag })[type], true));
+    ["mousemove", "click", "keydown", "keyup", "mousedown", "mouseup"].forEach(type => document.removeEventListener(type, ({ mousemove: onMove, click: onClick, keydown: onKey, keyup: onKeyUp, mousedown: startDrag, mouseup: endDrag })[type], true));
     document.removeEventListener("mousemove", moveDrag, true);
-    state.root?.remove(); state.root = null; state.selected = null; state.drag = null;
-    pushPanelState();
+    state.toolbarCleanup?.();
+    state.toolbarCleanup = null;
+    teardownInjectedStyles();
+    state.root?.remove();
+    state.root = null;
+    state.selected = null;
+    state.hover = null;
+    state.drag = null;
+    chrome.runtime.sendMessage({ type: "TINKR_DESIGN_INACTIVE" }).catch(() => {});
+    if (!silent) pushPanelState();
     return getPanelState();
   }
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-    if (message.type === "TINKR_TOGGLE") { sendResponse(handleCmd("toggle")); return true; }
-    if (message.type === "TINKR_GET_STATE") { sendResponse(getPanelState()); return true; }
-    if (message.type === "TINKR_CMD") { sendResponse(handleCmd(message.cmd, message.payload || {})); return true; }
     if (message.type === "TINKR_REALTIME" && message.event?.type === "presence") {
       state.presence = message.event.state || [];
       renderPresence();
+      return;
+    }
+    if (message.type === "TINKR_TOGGLE" || message.type === "TINKR_GET_STATE" || message.type === "TINKR_CMD") {
+      (async () => {
+        if (message.type === "TINKR_TOGGLE") sendResponse(await handleCmd("toggle", message.payload || {}));
+        else if (message.type === "TINKR_GET_STATE") sendResponse(getPanelState());
+        else sendResponse(await handleCmd(message.cmd, message.payload || {}));
+      })();
+      return true;
     }
   });
 })();
