@@ -15,6 +15,7 @@ type Project = {
 export function CanvasEditor({ project, token }: { project: Project; token: string }) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [devMode, setDevMode] = useState(false);
+  const [timelineOpen, setTimelineOpen] = useState(false);
   const [tool, setTool] = useState({ group: "move", variant: "select" });
   const [blocked, setBlocked] = useState(false);
   const [status, setStatus] = useState("Loading canvas…");
@@ -22,6 +23,11 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const draft = project.current_draft || { patches: [] };
+
+  const postTool = useCallback((group: string, variant: string) => {
+    setTool({ group, variant });
+    iframeRef.current?.contentWindow?.postMessage({ type: "TINKR_SET_TOOL", group, variant }, "*");
+  }, []);
 
   const save = useCallback(async (nextDraft: Record<string, unknown>) => {
     clearTimeout(saveTimer.current);
@@ -89,13 +95,16 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
         <FloatingToolbar
           active={tool}
           devMode={devMode}
-          onTool={(g, v) => { setTool({ group: g, variant: v }); iframeRef.current?.contentWindow?.postMessage({ type: "TINKR_SET_TOOL", group: g, variant: v }, "*"); }}
+          timelineOpen={timelineOpen}
+          onTool={postTool}
           onDevMode={() => { setDevMode(d => !d); setStatus(devMode ? "Design" : "Dev Mode"); }}
+          onTimeline={() => setTimelineOpen(o => !o)}
           onPresent={() => window.open(`/projects/${project.id}/present`, "_blank")}
+          onResources={() => setStatus("Resources · use dashboard Assets panel")}
         />
-        <div style={timeline}>
+        <div style={{ ...timeline, display: timelineOpen ? "flex" : "none" }}>
           <span>Motion timeline</span>
-          <span style={muted}>{((draft.motion as unknown[]) || []).length} tracks</span>
+          <span style={muted}>{((draft.motion as unknown[]) || []).length} tracks · Present = preview · Motion = keyframes</span>
         </div>
         <div style={statusBar}>{status}</div>
       </div>
@@ -121,7 +130,7 @@ const rightRail: React.CSSProperties = { background: "#14151b", borderLeft: "1px
 const viewport: React.CSSProperties = { position: "relative", background: "#0a0a0d", overflow: "hidden" };
 const iframe: React.CSSProperties = { width: "100%", height: "100%", border: 0, background: "#fff" };
 const fallback: React.CSSProperties = { position: "absolute", inset: 0, display: "grid", placeContent: "center", background: "#14151b", zIndex: 5, textAlign: "center", padding: 24 };
-const timeline: React.CSSProperties = { position: "absolute", left: 12, right: 12, bottom: 72, height: 48, background: "rgba(16,17,22,.94)", border: "1px solid #383944", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 12px", fontSize: 12, zIndex: 15 };
+const timeline: React.CSSProperties = { position: "absolute", left: 12, right: 12, bottom: 108, height: 48, background: "rgba(16,17,22,.94)", border: "1px solid #383944", borderRadius: 10, alignItems: "center", justifyContent: "space-between", padding: "0 12px", fontSize: 12, zIndex: 15 };
 const statusBar: React.CSSProperties = { position: "absolute", top: 8, left: 8, background: "#14151bcc", padding: "4px 8px", borderRadius: 6, fontSize: 11, zIndex: 15 };
 const list: React.CSSProperties = { paddingLeft: 16, fontSize: 12, color: "#cdd0da" };
 const pre: React.CSSProperties = { background: "#1d1e25", padding: 8, borderRadius: 6, fontSize: 10, overflow: "auto", maxHeight: 300 };

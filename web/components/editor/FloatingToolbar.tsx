@@ -1,21 +1,100 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { TOOL_GROUPS, toolLabel } from "@/lib/tools";
 
-const TOOLS: { id: string; label: string; icon: IconName; group: string; variant: string }[] = [
-  { id: "select", label: "Select (V)", icon: "move", group: "move", variant: "select" },
-  { id: "hand", label: "Hand (H)", icon: "hand", group: "move", variant: "hand" },
-  { id: "frame", label: "Frame (F)", icon: "frame", group: "region", variant: "frame" },
-  { id: "rect", label: "Rectangle (R)", icon: "square", group: "shape", variant: "rect" },
-  { id: "pen", label: "Pen (P)", icon: "pen", group: "draw", variant: "pen" },
-  { id: "text", label: "Text (T)", icon: "type", group: "text", variant: "text" }
-];
+type Props = {
+  active: { group: string; variant: string };
+  devMode: boolean;
+  timelineOpen: boolean;
+  onTool: (group: string, variant: string) => void;
+  onDevMode: () => void;
+  onTimeline: () => void;
+  onPresent: () => void;
+  onResources: () => void;
+};
 
-export function FloatingToolbar({ active, devMode, onTool, onDevMode, onPresent }: { active: { group: string; variant: string }; devMode: boolean; onTool: (group: string, variant: string) => void; onDevMode: () => void; onPresent: () => void; }) {
-  return <div className="editor-toolbar" role="toolbar" aria-label="Tinkr editor tools">
-    {TOOLS.map(t => <button key={t.id} className={`editor-toolbar__button ${active.group === t.group && active.variant === t.variant && !devMode ? "is-active" : ""}`} onClick={() => onTool(t.group, t.variant)} title={t.label} aria-label={t.label}><Icon name={t.icon}/></button>)}
-    <span className="editor-toolbar__sep"/>
-    <button className={`editor-toolbar__button ${devMode ? "is-dev" : ""}`} onClick={onDevMode} title="Dev Mode" aria-label="Toggle Dev Mode"><Icon name="code"/></button>
-    <button className="editor-toolbar__button" onClick={onPresent} title="Present prototype" aria-label="Present prototype"><Icon name="play"/></button>
-  </div>;
+function ToolDropdown({ groupKey, active, devMode, onTool }: { groupKey: string; active: Props["active"]; devMode: boolean; onTool: Props["onTool"] }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const group = TOOL_GROUPS[groupKey];
+  const icon = group.icon as IconName;
+  const isActive = active.group === groupKey && !devMode;
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [open]);
+
+  return (
+    <div className="editor-toolbar__group" ref={ref}>
+      <button
+        className={`editor-toolbar__button ${isActive ? "is-active" : ""}`}
+        onClick={() => setOpen(o => !o)}
+        title={group.label}
+        aria-label={`${group.label} tools`}
+        aria-expanded={open}
+      >
+        <Icon name={icon} />
+      </button>
+      {open && (
+        <div className="editor-toolbar__menu" role="menu">
+          {group.variants.map(v => (
+            <button
+              key={v.id}
+              role="menuitem"
+              className={`editor-toolbar__menu-item ${active.group === groupKey && active.variant === v.id ? "is-active" : ""}`}
+              onClick={() => { onTool(groupKey, v.id); setOpen(false); }}
+            >
+              <span>{v.label}</span>
+              {v.shortcut && <kbd>{v.shortcut}</kbd>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function FloatingToolbar({ active, devMode, timelineOpen, onTool, onDevMode, onTimeline, onPresent, onResources }: Props) {
+  const status = toolLabel(active.group, active.variant);
+
+  return (
+    <>
+      <div className="editor-toolbar" role="toolbar" aria-label="Tinkr editor tools">
+        {Object.keys(TOOL_GROUPS).map(g => (
+          <ToolDropdown key={g} groupKey={g} active={active} devMode={devMode} onTool={onTool} />
+        ))}
+        <button className="editor-toolbar__button" onClick={onResources} title="Resources" aria-label="Resources">
+          <Icon name="resource" />
+        </button>
+        <span className="editor-toolbar__sep" />
+        <button
+          className={`editor-toolbar__button ${active.group === "move" && active.variant === "hand" && !devMode ? "is-active" : ""}`}
+          onClick={() => onTool("move", "hand")}
+          title="Hand (H)"
+          aria-label="Hand tool"
+        >
+          <Icon name="hand" />
+        </button>
+        <button className="editor-toolbar__button" onClick={() => onTool("comment", "pin")} title="Comment (C)" aria-label="Comment">
+          <Icon name="comment" />
+        </button>
+        <span className="editor-toolbar__sep" />
+        <button className="editor-toolbar__button" onClick={onPresent} title="Present · preview in browser" aria-label="Present prototype">
+          <Icon name="present" />
+        </button>
+        <button className={`editor-toolbar__button ${timelineOpen ? "is-active" : ""}`} onClick={onTimeline} title="Motion · keyframe timeline" aria-label="Motion timeline">
+          <Icon name="motion" />
+        </button>
+        <button className={`editor-toolbar__button ${devMode ? "is-dev" : ""}`} onClick={onDevMode} title="Dev Mode · inspect values" aria-label="Toggle Dev Mode">
+          <Icon name="devMode" />
+        </button>
+      </div>
+      <div className="editor-toolbar__hint" aria-live="polite">{status}</div>
+    </>
+  );
 }

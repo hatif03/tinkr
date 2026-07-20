@@ -16,6 +16,12 @@
   --tk-dev: #c4a1ff;
   --tk-warning: #ffbd63;
   --tk-danger: #ff9ca3;
+  --tk-ink-pencil: #9aa4b8;
+  --tk-ink-pen: #76e7ff;
+  --tk-ink-pen-anchor: #c9ff46;
+  --tk-ink-vector: #a8b4ff;
+  --tk-stroke-width-pencil: 2;
+  --tk-stroke-width-pen: 1.5;
   --tk-focus: #76e7ff;
   --tk-radius-xs: 6px;
   --tk-radius-sm: 9px;
@@ -104,9 +110,16 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .create-menu { display: flex; align-items: center; gap: 8px; padding: 24px 32px 0; }
 .create-menu__input { display: flex; flex: 1; min-width: 220px; gap: 8px; }
 .editor-toolbar { position: absolute; z-index: 20; bottom: 24px; left: 50%; display: flex; gap: 4px; align-items: center; padding: 6px 8px; transform: translateX(-50%); border: 1px solid var(--tk-border-strong); border-radius: 999px; background: rgb(21 22 28 / .93); box-shadow: var(--tk-shadow-float); backdrop-filter: blur(16px); }
+.editor-toolbar__group { position: relative; }
 .editor-toolbar__button { display: grid; width: 34px; height: 34px; place-items: center; border: 0; border-radius: 9px; color: var(--tk-text); background: transparent; }
 .editor-toolbar__button:hover, .editor-toolbar__button.is-active { color: var(--tk-primary); background: var(--tk-surface-hover); }
-.editor-toolbar__button.is-dev { color: var(--tk-dev); background: rgb(196 161 255 / .13); }.editor-toolbar__sep { width: 1px; height: 22px; margin: 0 4px; background: var(--tk-border); }
+.editor-toolbar__button.is-dev { color: var(--tk-dev); background: rgb(196 161 255 / .13); }
+.editor-toolbar__sep { width: 1px; height: 22px; margin: 0 4px; background: var(--tk-border); }
+.editor-toolbar__menu { position: absolute; bottom: calc(100% + 8px); left: 50%; min-width: 188px; padding: 6px; transform: translateX(-50%); border: 1px solid var(--tk-border-strong); border-radius: 10px; background: var(--tk-surface); box-shadow: var(--tk-shadow-float); }
+.editor-toolbar__menu-item { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 12px; border: 0; border-radius: 6px; padding: 8px 9px; color: var(--tk-text); background: transparent; font-size: 12px; font-weight: 600; text-align: left; }
+.editor-toolbar__menu-item:hover, .editor-toolbar__menu-item.is-active { background: var(--tk-surface-hover); color: var(--tk-primary); }
+.editor-toolbar__menu-item kbd { color: var(--tk-text-faint); font: 10px var(--tk-mono); }
+.editor-toolbar__hint { position: absolute; z-index: 19; bottom: 72px; left: 50%; transform: translateX(-50%); padding: 4px 10px; border: 1px solid var(--tk-border); border-radius: 6px; color: var(--tk-text-muted); background: rgb(21 22 28 / .88); font-size: 10px; font-weight: 650; white-space: nowrap; pointer-events: none; }
 @keyframes tk-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) { .tk-sidebar { width: 62px; padding-inline: 8px; } .tk-logo { justify-content: center; } .tk-logo > span:last-child, .tk-nav a span, .tk-sidebar-foot { display: none; } .tk-nav a { justify-content: center; } .tk-page { padding: 22px 16px; } .tk-page-header { align-items: stretch; flex-direction: column; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: 1ms !important; animation-duration: 1ms !important; } }
