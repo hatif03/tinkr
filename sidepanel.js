@@ -109,6 +109,11 @@ function switchPanel(name) {
   document.querySelectorAll("[data-panel]").forEach(b => b.classList.toggle("active", b.dataset.panel === name));
   document.querySelectorAll(".panel").forEach(p => p.classList.add("tinkr-hide"));
   $(`panel-${name}`)?.classList.remove("tinkr-hide");
+  if (name === "design" || name === "canvas") {
+    document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === "design"));
+  } else if (name === "inspect") {
+    document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === "dev"));
+  }
   send("setPanel", { panel: name }).catch(() => {});
 }
 

@@ -64,9 +64,13 @@ async function apiRequest(path, init = {}) {
   const token = await getAccessToken();
   const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
-  const response = await fetch(`${apiUrl}${path}`, { ...init, headers });
-  const data = await response.json().catch(() => ({}));
-  return { ok: response.ok, status: response.status, data };
+  try {
+    const response = await fetch(`${apiUrl}${path}`, { ...init, headers });
+    const data = await response.json().catch(() => ({}));
+    return { ok: response.ok, status: response.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, data: { error: error?.message || "Network request failed" } };
+  }
 }
 
 let presenceTimer = null;
@@ -125,77 +129,89 @@ chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) =>
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  const asyncTypes = new Set([
+    "TINKR_GET_AUTH", "TINKR_SIGN_OUT", "TINKR_GET_TOKEN", "TINKR_API",
+    "TINKR_REALTIME_JOIN", "TINKR_REALTIME_CURSOR", "TINKR_OPEN_LOGIN",
+    "TINKR_DESIGN_ACTIVE", "TINKR_DESIGN_INACTIVE", "TINKR_GET_DESIGN_TAB", "TINKR_CAPTURE_SLICE"
+  ]);
+  if (!asyncTypes.has(message.type)) return false;
+
   (async () => {
-    if (message.type === "TINKR_GET_AUTH") {
-      const session = await refreshSessionIfNeeded();
-      sendResponse({ signedIn: Boolean(session), user: session?.user || null });
-      return;
-    }
-    if (message.type === "TINKR_SIGN_OUT") {
-      await setSession(null);
-      activeProjectId = null;
-      if (presenceTimer) clearInterval(presenceTimer);
-      sendResponse({ ok: true });
-      return;
-    }
-    if (message.type === "TINKR_GET_TOKEN") {
-      sendResponse({ token: await getAccessToken() });
-      return;
-    }
-    if (message.type === "TINKR_API") {
-      const result = await apiRequest(message.path, { method: message.method || "GET", body: message.body ? JSON.stringify(message.body) : undefined });
-      if (message.path.includes("/realtime") && result.ok) {
-        await chrome.storage.local.set({ tinkrSupabase: { supabaseUrl: result.data.supabaseUrl, anonKey: result.data.anonKey } });
+    try {
+      if (message.type === "TINKR_GET_AUTH") {
+        const session = await refreshSessionIfNeeded();
+        sendResponse({ signedIn: Boolean(session), user: session?.user || null });
+        return;
       }
-      sendResponse(result);
-      return;
-    }
-    if (message.type === "TINKR_REALTIME_JOIN") {
-      startPresenceLoop(message.projectId);
-      sendResponse({ ok: true });
-      return;
-    }
-    if (message.type === "TINKR_REALTIME_CURSOR") {
-      const session = await refreshSessionIfNeeded();
-      if (!session || !message.projectId) return sendResponse({ ok: false });
-      const color = CURSOR_COLORS[(session.user?.id || "").charCodeAt(0) % CURSOR_COLORS.length];
-      await apiRequest(`/api/projects/${message.projectId}/presence`, {
-        method: "POST",
-        body: JSON.stringify({ cursor: message.payload, message: message.payload?.message || null, color })
-      });
-      sendResponse({ ok: true });
-      return;
-    }
-    if (message.type === "TINKR_OPEN_LOGIN") {
-      chrome.tabs.create({ url: `${TINKR_CONFIG.appUrl}/login?source=extension&ext_id=${chrome.runtime.id}` });
-      sendResponse({ ok: true });
-      return;
-    }
-    if (message.type === "TINKR_DESIGN_ACTIVE") {
-      setDesignTabId(_sender.tab?.id ?? null);
-      sendResponse({ ok: true });
-      return;
-    }
-    if (message.type === "TINKR_DESIGN_INACTIVE") {
-      if (_sender.tab?.id === designTabId) setDesignTabId(null);
-      sendResponse({ ok: true });
-      return;
-    }
-    if (message.type === "TINKR_GET_DESIGN_TAB") {
-      sendResponse({ tabId: designTabId });
-      return;
-    }
-    if (message.type === "TINKR_CAPTURE_SLICE") {
-      const tabId = message.tabId || _sender.tab?.id;
-      if (!tabId) return sendResponse({ ok: false, error: "no tab" });
-      const tab = await chrome.tabs.get(tabId);
-      const dataUrl = await captureVisiblePng(tab.windowId);
-      if (message.download) {
-        const filename = message.filename || `tinkr-slice-${Date.now()}.png`;
-        await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+      if (message.type === "TINKR_SIGN_OUT") {
+        await setSession(null);
+        activeProjectId = null;
+        if (presenceTimer) clearInterval(presenceTimer);
+        sendResponse({ ok: true });
+        return;
       }
-      sendResponse({ ok: true, dataUrl });
-      return;
+      if (message.type === "TINKR_GET_TOKEN") {
+        sendResponse({ token: await getAccessToken() });
+        return;
+      }
+      if (message.type === "TINKR_API") {
+        const result = await apiRequest(message.path, { method: message.method || "GET", body: message.body ? JSON.stringify(message.body) : undefined });
+        if (message.path.includes("/realtime") && result.ok) {
+          await chrome.storage.local.set({ tinkrSupabase: { supabaseUrl: result.data.supabaseUrl, anonKey: result.data.anonKey } });
+        }
+        sendResponse(result);
+        return;
+      }
+      if (message.type === "TINKR_REALTIME_JOIN") {
+        startPresenceLoop(message.projectId);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (message.type === "TINKR_REALTIME_CURSOR") {
+        const session = await refreshSessionIfNeeded();
+        if (!session || !message.projectId) { sendResponse({ ok: false }); return; }
+        const color = CURSOR_COLORS[(session.user?.id || "").charCodeAt(0) % CURSOR_COLORS.length];
+        await apiRequest(`/api/projects/${message.projectId}/presence`, {
+          method: "POST",
+          body: JSON.stringify({ cursor: message.payload, message: message.payload?.message || null, color })
+        });
+        sendResponse({ ok: true });
+        return;
+      }
+      if (message.type === "TINKR_OPEN_LOGIN") {
+        chrome.tabs.create({ url: `${TINKR_CONFIG.appUrl}/login?source=extension&ext_id=${chrome.runtime.id}` });
+        sendResponse({ ok: true });
+        return;
+      }
+      if (message.type === "TINKR_DESIGN_ACTIVE") {
+        setDesignTabId(_sender.tab?.id ?? null);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (message.type === "TINKR_DESIGN_INACTIVE") {
+        if (_sender.tab?.id === designTabId) setDesignTabId(null);
+        sendResponse({ ok: true });
+        return;
+      }
+      if (message.type === "TINKR_GET_DESIGN_TAB") {
+        sendResponse({ tabId: designTabId });
+        return;
+      }
+      if (message.type === "TINKR_CAPTURE_SLICE") {
+        const tabId = message.tabId || _sender.tab?.id;
+        if (!tabId) { sendResponse({ ok: false, error: "no tab" }); return; }
+        const tab = await chrome.tabs.get(tabId);
+        const dataUrl = await captureVisiblePng(tab.windowId);
+        if (message.download) {
+          const filename = message.filename || `tinkr-slice-${Date.now()}.png`;
+          await chrome.downloads.download({ url: dataUrl, filename, saveAs: false });
+        }
+        sendResponse({ ok: true, dataUrl });
+        return;
+      }
+      sendResponse({ ok: false, error: "Unhandled message" });
+    } catch (error) {
+      sendResponse({ ok: false, error: error?.message || "Background handler failed" });
     }
   })();
   return true;

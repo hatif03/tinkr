@@ -31,7 +31,7 @@
     pinCommentMode: false, originalStyles: new Map(), preview: null, _status: "", labOutput: null, labHasOps: null,
     drawSession: null, panSession: null, scaleSession: null, penNodes: [], penSession: null,
     strokeSession: null, vectorEditMode: "move", timelineOpen: false, presentMode: false,
-    toolbarCleanup: null, spaceHand: false, toolBeforeSpace: null, onPageHide: null
+    toolbarCleanup: null, spaceHand: false, toolBeforeSpace: null, onPageHide: null, suppressClick: false
   };
 
   function toolStatusLabel() {
@@ -167,7 +167,25 @@
     layer.innerHTML = pts.map(p => `<div class="tinkr-scale-handle" data-handle="${p}" style="left:${pos[p][0]}px;top:${pos[p][1]}px"></div>`).join("");
   }
 
-  function isTinkr(node) { return node && (node === state.root || state.root?.contains(node)); }
+  function isTinkr(node) {
+    if (!node) return false;
+    if (node.classList?.contains("tinkr-scale-handle")) return false;
+    return node === state.root || state.root?.contains(node);
+  }
+
+  function isToolbarTarget(node) {
+    if (!node?.closest) return false;
+    return Boolean(node.closest(".tinkr-toolbar, .tinkr-vector-toolbar, .tinkr-timeline, .tinkr-tool-menu, .tinkr-scale-handle"));
+  }
+
+  function pageElementAt(x, y) {
+    const stack = document.elementsFromPoint?.(x, y) || [document.elementFromPoint(x, y)];
+    for (const node of stack) {
+      if (!node || node.nodeType !== 1 || isTinkr(node) || SKIP.has(node.tagName)) continue;
+      return node;
+    }
+    return null;
+  }
 
   function getDevOutput() {
     if (!state.selected) return "Select an element for Dev Mode specs.";
@@ -259,9 +277,15 @@
   function setTool(group, variant) {
     TC().setTool(state.tool, group, variant);
     state.pinCommentMode = group === "comment";
+    if (group === "move" && variant === "select") {
+      setDevMode(false);
+      state.spaceHand = false;
+      state.panSession = null;
+    }
     if (group === "region" && variant === "section") addSection(prompt("Section label", "Section") || "Section", state.selected);
-    if (group === "region" && variant === "frame") insertComponent("wireframe");
-    if (group === "region" && variant === "slice") { state.drawSession = { type: "slice", start: null }; status("Drag to define slice region."); }
+    else if (group === "region" && variant === "frame") insertComponent("wireframe");
+    else if (group === "region" && variant === "slice") { state.drawSession = { type: "slice", start: null }; status("Drag to define slice region."); }
+    else state.drawSession = null;
     if (group === "shape" && variant === "image") { insertImageFromPicker(); return; }
     if (group === "text" && variant === "textPath") { attachTextOnPath(); return; }
     if (group === "draw" && variant === "eyedropper") { openScreenEyedropper(); return; }
@@ -379,7 +403,7 @@
   }
 
   function sampleColorAt(x, y) {
-    const el = document.elementFromPoint(x, y);
+    const el = pageElementAt(x, y);
     if (!el || isTinkr(el)) return status("Eyedropper · click a visible color on the page.");
     applySampledColor(rgbToHex(getComputedStyle(el).color));
   }
@@ -564,21 +588,26 @@
   }
 
   async function syncCloud() {
-    const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
-    state.signedIn = auth?.signedIn;
-    if (!state.signedIn) return;
-    const body = { current_draft: draftPayload(), canvas_meta: { sections: state.sections, viewportState: state.viewport }, sourceUrl: location.href, fingerprint: { pathname: location.pathname, title: document.title } };
-    if (state.projectId) {
-      const result = await api(`/api/projects/${state.projectId}`, "PATCH", body);
-      status(result.ok ? "Synced to Tinkr Cloud." : `Cloud sync failed: ${result.data?.error || "unknown"}`);
-      return;
-    }
-    const created = await api("/api/projects", "POST", { ...body, name: document.title.slice(0, 80) || "Untitled remix" });
-    if (created.ok) {
-      state.projectId = created.data.project.id;
-      await chrome.storage.local.set({ [storageKey()]: { ...draftPayload(), projectId: state.projectId, updatedAt: new Date().toISOString() } });
-      chrome.runtime.sendMessage({ type: "TINKR_REALTIME_JOIN", projectId: state.projectId });
-      status("Created cloud project and synced.");
+    try {
+      const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
+      state.signedIn = auth?.signedIn;
+      if (!state.signedIn) return;
+      const body = { current_draft: draftPayload(), canvas_meta: { sections: state.sections, viewportState: state.viewport }, sourceUrl: location.href, fingerprint: { pathname: location.pathname, title: document.title } };
+      if (state.projectId) {
+        const result = await api(`/api/projects/${state.projectId}`, "PATCH", body);
+        if (result?.ok) status("Synced to Tinkr Cloud.");
+        else if (result) status(`Cloud sync failed: ${result.data?.error || "unknown"}`);
+        return;
+      }
+      const created = await api("/api/projects", "POST", { ...body, name: document.title.slice(0, 80) || "Untitled remix" });
+      if (created?.ok) {
+        state.projectId = created.data.project.id;
+        await chrome.storage.local.set({ [storageKey()]: { ...draftPayload(), projectId: state.projectId, updatedAt: new Date().toISOString() } });
+        chrome.runtime.sendMessage({ type: "TINKR_REALTIME_JOIN", projectId: state.projectId });
+        status("Created cloud project and synced.");
+      }
+    } catch {
+      /* API offline — local edits still saved */
     }
   }
 
@@ -846,7 +875,13 @@
   async function handleCmd(cmd, payload) {
     if (cmd === "toggle") return state.active ? deactivate(payload) : activate();
     if (cmd === "deactivate") return deactivate(payload);
-    if (cmd === "setPanel") { state.panel = payload.panel || "design"; if (payload.panel === "inspect") setDevMode(true); pushPanelState(); return getPanelState(); }
+    if (cmd === "setPanel") {
+      state.panel = payload.panel || "design";
+      if (payload.panel === "inspect") setDevMode(true);
+      else if (payload.panel === "design" || payload.panel === "canvas") setDevMode(false);
+      pushPanelState();
+      return getPanelState();
+    }
     if (cmd === "setTool") { setTool(payload.group, payload.variant); return getPanelState(); }
     if (cmd === "setDevMode") { setDevMode(Boolean(payload.on)); return getPanelState(); }
     if (cmd === "setProtoMode") { setProtoMode(Boolean(payload.on)); return getPanelState(); }
@@ -869,7 +904,11 @@
   }
 
   function startDrag(event) {
-    if (isTinkr(event.target)) return;
+    if (event.target?.classList?.contains("tinkr-scale-handle") && state.tool.variant === "scale" && state.selected) {
+      state.scaleSession = { handle: event.target.dataset.handle, el: state.selected, start: snapshot(state.selected), rect: state.selected.getBoundingClientRect(), x: event.clientX, y: event.clientY };
+      event.preventDefault(); return;
+    }
+    if (isToolbarTarget(event.target)) return;
     if (state.spaceHand || TC().shouldPan(state.tool)) {
       state.panSession = { x: event.clientX, y: event.clientY, vx: state.viewport.x, vy: state.viewport.y };
       event.preventDefault(); return;
@@ -900,16 +939,22 @@
       state.drawSession = { ...(state.drawSession || {}), startX: event.clientX, startY: event.clientY, active: true };
       event.preventDefault(); return;
     }
-    if (!state.selected || event.button !== 0 || state.tool.devMode || (!TC().shouldSelectElements(state.tool) && !TC().shouldScale(state.tool))) return;
-    if (state.tool.variant === "scale" && event.target?.dataset?.handle) {
-      state.scaleSession = { handle: event.target.dataset.handle, el: state.selected, start: snapshot(state.selected), rect: state.selected.getBoundingClientRect(), x: event.clientX, y: event.clientY };
-      event.preventDefault(); return;
+    if (event.button !== 0 || state.tool.devMode) return;
+
+    if (TC().shouldSelectElements(state.tool)) {
+      const hit = pageElementAt(event.clientX, event.clientY);
+      if (hit) select(event.altKey ? hit.parentElement : hit);
     }
-    if (!state.selected.contains(event.target) && event.target !== state.selected) return;
+
+    if (!state.selected || (!TC().shouldSelectElements(state.tool) && !TC().shouldScale(state.tool))) return;
+
+    const hit = pageElementAt(event.clientX, event.clientY);
+    if (!hit || (hit !== state.selected && !state.selected.contains(hit))) return;
     event.preventDefault();
     const el = state.selected, before = snapshot(el);
     const parent = el.parentElement, parentStyle = parent && getComputedStyle(parent);
     const flow = Boolean(parent && (parentStyle.display.includes("flex") || parentStyle.display.includes("grid") || getComputedStyle(el).position === "static"));
+    if (!flow && getComputedStyle(el).position === "static") el.style.position = "relative";
     state.drag = { el, before, x: event.clientX, y: event.clientY, left: parseFloat(el.style.left) || 0, top: parseFloat(el.style.top) || 0, flow, parent, originalNext: el.nextElementSibling, selector: selectorFor(el) };
     if (flow) status("Reorder mode · drag between siblings to place this layer.");
   }
@@ -963,7 +1008,7 @@
     if (!state.drag) return;
     const d = state.drag;
     if (d.flow) {
-      const hit = document.elementFromPoint(event.clientX, event.clientY);
+      const hit = pageElementAt(event.clientX, event.clientY);
       let sibling = hit;
       while (sibling && sibling.parentElement !== d.parent) sibling = sibling.parentElement;
       if (sibling && sibling !== d.el) {
@@ -975,8 +1020,9 @@
       }
       return;
     }
-    d.el.style.left = `${d.left + event.clientX - d.x}px`;
-    d.el.style.top = `${d.top + event.clientY - d.y}px`;
+    const scale = state.viewport.scale || 1;
+    d.el.style.left = `${d.left + (event.clientX - d.x) / scale}px`;
+    d.el.style.top = `${d.top + (event.clientY - d.y) / scale}px`;
     placeBox("#tinkr-selected", d.el);
   }
 
@@ -1013,15 +1059,17 @@
       state.drag = null; status(changed ? "Layer reordered." : "Reorder cancelled."); return;
     }
     const moved = d.el.style.left !== `${d.left}px` || d.el.style.top !== `${d.top}px`;
-    if (moved) push({ type: "set_styles", selector: selectorFor(d.el), styles: { position: d.el.style.position, left: d.el.style.left, top: d.el.style.top } }, () => restore(d.el, d.before));
-    else restore(d.el, d.before);
+    if (moved) {
+      state.suppressClick = true;
+      push({ type: "set_styles", selector: selectorFor(d.el), styles: { position: d.el.style.position, left: d.el.style.left, top: d.el.style.top } }, () => restore(d.el, d.before));
+    } else restore(d.el, d.before);
     state.drag = null;
   }
 
   function onMove(event) {
     if (!state.active) return;
     drawOverlay(); renderPins(); renderDevOverlay();
-    const el = document.elementFromPoint(event.clientX, event.clientY);
+    const el = pageElementAt(event.clientX, event.clientY);
     if (el && !isTinkr(el)) {
       updateCursor(event, el);
       if (!state.drag && !state.tool.devMode && TC().shouldSelectElements(state.tool) && el !== state.hover) {
@@ -1033,10 +1081,11 @@
   }
 
   function onClick(event) {
-    if (!state.active || isTinkr(event.target)) return;
+    if (!state.active || isToolbarTarget(event.target)) return;
+    if (state.suppressClick) { state.suppressClick = false; return; }
     if (state.tool.group === "comment" || state.pinCommentMode) {
       event.preventDefault(); event.stopPropagation();
-      const body = prompt("Pinned comment"); if (body) addLocalComment(body, document.elementFromPoint(event.clientX, event.clientY) || document.body);
+      const body = prompt("Pinned comment"); if (body) addLocalComment(body, pageElementAt(event.clientX, event.clientY) || document.body);
       state.pinCommentMode = false; state.tool.group = "move"; state.tool.variant = "select"; pushPanelState(); return;
     }
     if (state.spaceHand) return;
@@ -1050,7 +1099,9 @@
     }
     const hitVector = [...state.vectorLayers].reverse().find(v => TC().hitTest(v, event.clientX, event.clientY));
     if (hitVector && (event.altKey || state.tool.group === "draw")) { selectVector(hitVector.id); return; }
-    select(event.altKey ? event.target.parentElement : event.target);
+    const hit = pageElementAt(event.clientX, event.clientY);
+    if (!hit) return;
+    select(event.altKey ? hit.parentElement : hit);
   }
 
   function onKey(event) {
@@ -1125,6 +1176,17 @@
     }
   }
 
+  function onWindowBlur() {
+    if (!state.spaceHand) return;
+    state.spaceHand = false;
+    state.panSession = null;
+    pushPanelState();
+  }
+
+  function onVisibilityChange() {
+    if (document.hidden) onWindowBlur();
+  }
+
   function onPageHide() {
     if (!state.active) return;
     clearTimeout(state.autosaveTimer);
@@ -1149,6 +1211,8 @@
     state.onPageHide = onPageHide;
     window.addEventListener("pagehide", state.onPageHide);
     window.addEventListener("beforeunload", state.onPageHide);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
     state.observer = new MutationObserver(() => { clearTimeout(state.settleTimer); state.settleTimer = setTimeout(() => { if (state.active) state.patches.forEach(p => applyPatch(p)); }, 160); });
     state.observer.observe(document.body, { childList: true, subtree: true });
     await bootFromUrl();
@@ -1189,6 +1253,8 @@
     window.removeEventListener("scroll", onScroll, true);
     window.removeEventListener("pagehide", state.onPageHide);
     window.removeEventListener("beforeunload", state.onPageHide);
+    window.removeEventListener("blur", onWindowBlur);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     document.removeEventListener("wheel", onWheel, true);
     ["mousemove", "click", "keydown", "keyup", "mousedown", "mouseup"].forEach(type => document.removeEventListener(type, ({ mousemove: onMove, click: onClick, keydown: onKey, keyup: onKeyUp, mousedown: startDrag, mouseup: endDrag })[type], true));
     document.removeEventListener("mousemove", moveDrag, true);
@@ -1213,9 +1279,13 @@
     }
     if (message.type === "TINKR_TOGGLE" || message.type === "TINKR_GET_STATE" || message.type === "TINKR_CMD") {
       (async () => {
-        if (message.type === "TINKR_TOGGLE") sendResponse(await handleCmd("toggle", message.payload || {}));
-        else if (message.type === "TINKR_GET_STATE") sendResponse(getPanelState());
-        else sendResponse(await handleCmd(message.cmd, message.payload || {}));
+        try {
+          if (message.type === "TINKR_TOGGLE") sendResponse(await handleCmd("toggle", message.payload || {}));
+          else if (message.type === "TINKR_GET_STATE") sendResponse(getPanelState());
+          else sendResponse(await handleCmd(message.cmd, message.payload || {}));
+        } catch (error) {
+          sendResponse({ active: state.active, error: error?.message || "Command failed" });
+        }
       })();
       return true;
     }
