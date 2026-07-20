@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon, type IconName } from "@/components/ui/Icon";
-import { TOOL_GROUPS, toolLabel } from "@/lib/tools";
+import { TOOL_GROUPS, toolLabel, variantIcon } from "@/lib/tools";
 
 type Props = {
   active: { group: string; variant: string };
@@ -19,8 +19,8 @@ function ToolDropdown({ groupKey, active, devMode, onTool }: { groupKey: string;
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const group = TOOL_GROUPS[groupKey];
-  const icon = group.icon as IconName;
   const isActive = active.group === groupKey && !devMode;
+  const triggerIcon = (isActive ? variantIcon(groupKey, active.variant) : group.icon) as IconName;
 
   useEffect(() => {
     if (!open) return;
@@ -38,21 +38,28 @@ function ToolDropdown({ groupKey, active, devMode, onTool }: { groupKey: string;
         aria-label={`${group.label} tools`}
         aria-expanded={open}
       >
-        <Icon name={icon} />
+        <Icon name={triggerIcon} />
       </button>
       {open && (
         <div className="editor-toolbar__menu" role="menu">
-          {group.variants.map(v => (
-            <button
-              key={v.id}
-              role="menuitem"
-              className={`editor-toolbar__menu-item ${active.group === groupKey && active.variant === v.id ? "is-active" : ""}`}
-              onClick={() => { onTool(groupKey, v.id); setOpen(false); }}
-            >
-              <span>{v.label}</span>
-              {v.shortcut && <kbd>{v.shortcut}</kbd>}
-            </button>
-          ))}
+          {group.variants.map(v => {
+            const selected = active.group === groupKey && active.variant === v.id && !devMode;
+            return (
+              <button
+                key={v.id}
+                role="menuitem"
+                className={`editor-toolbar__menu-item ${selected ? "is-active" : ""}`}
+                onClick={() => { onTool(groupKey, v.id); setOpen(false); }}
+              >
+                <span className="editor-toolbar__menu-leading">
+                  <span className="editor-toolbar__menu-check" aria-hidden="true">{selected ? "✓" : ""}</span>
+                  <span className="editor-toolbar__menu-icon"><Icon name={v.icon as IconName} size={16} /></span>
+                  <span>{v.label}</span>
+                </span>
+                {v.shortcut && <kbd>{v.shortcut}</kbd>}
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -68,7 +75,7 @@ export function FloatingToolbar({ active, devMode, timelineOpen, onTool, onDevMo
         {Object.keys(TOOL_GROUPS).map(g => (
           <ToolDropdown key={g} groupKey={g} active={active} devMode={devMode} onTool={onTool} />
         ))}
-        <button className="editor-toolbar__button" onClick={onResources} title="Resources" aria-label="Resources">
+        <button className="editor-toolbar__button" onClick={onResources} title="Resources (Shift+I)" aria-label="Resources">
           <Icon name="resource" />
         </button>
         <span className="editor-toolbar__sep" />
@@ -90,7 +97,7 @@ export function FloatingToolbar({ active, devMode, timelineOpen, onTool, onDevMo
         <button className={`editor-toolbar__button ${timelineOpen ? "is-active" : ""}`} onClick={onTimeline} title="Motion · keyframe timeline" aria-label="Motion timeline">
           <Icon name="motion" />
         </button>
-        <button className={`editor-toolbar__button ${devMode ? "is-dev" : ""}`} onClick={onDevMode} title="Dev Mode · inspect values" aria-label="Toggle Dev Mode">
+        <button className={`editor-toolbar__button ${devMode ? "is-dev" : ""}`} onClick={onDevMode} title="Dev Mode (Shift+D)" aria-label="Toggle Dev Mode">
           <Icon name="devMode" />
         </button>
       </div>

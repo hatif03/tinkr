@@ -4,13 +4,14 @@ export type IconName =
   | "sparkle" | "clock" | "star" | "folder" | "library" | "search" | "plus" | "more" | "external" | "edit"
   | "play" | "chevron" | "logOut" | "arrowLeft" | "layers" | "code" | "share" | "check" | "cloud"
   | "hand" | "move" | "frame" | "square" | "shape" | "pen" | "pencil" | "type" | "comment" | "command"
-  | "present" | "motion" | "devMode" | "resource" | "eyedropper" | "image" | "scale" | "slice";
+  | "present" | "motion" | "devMode" | "resource" | "eyedropper" | "image" | "scale" | "slice"
+  | "line" | "arrow" | "ellipse" | "polygon" | "section" | "textPath";
 
 // Path data synced with packages/canvas/icons.js
 const paths: Record<IconName, React.ReactNode> = {
   sparkle: <><path d="m12 2 1.7 5.3L19 9l-5.3 1.7L12 16l-1.7-5.3L5 9l5.3-1.7L12 2Z"/><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z"/></>,
   clock: <><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></>,
-  star: <path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9L12 3Z"/>,
+  star: <path d="m12 3 2.5 7.5H3l6 4.5-2.5 7.5L12 17l5.5 5.5L15 15l6-4.5h-7.5L12 3Z"/>,
   folder: <path d="M3.5 6.5h6l1.7 2H20.5v9.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2V8.5a2 2 0 0 1 2-2Z"/>,
   library: <><path d="M4 4.5h13.5v15H4z"/><path d="M8 4.5v15M12 8h3"/></>,
   search: <><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></>,
@@ -28,7 +29,7 @@ const paths: Record<IconName, React.ReactNode> = {
   check: <path d="m5 12 4 4L19 6"/>,
   cloud: <path d="M7 18a4 4 0 1 1 .8-7.9A5.5 5.5 0 0 1 18.5 12 3.2 3.2 0 1 1 18 18H7Z"/>,
   hand: <path d="M8 11V5a1.5 1.5 0 0 1 3 0v5V3.5a1.5 1.5 0 0 1 3 0V10V5a1.5 1.5 0 0 1 3 0v6l1-1a1.6 1.6 0 0 1 2.3 2.3l-3.7 4A5 5 0 0 1 13 18H11a5 5 0 0 1-5-5v-2a1.5 1.5 0 0 1 2 0Z"/>,
-  move: <path d="m12 3 2 2-1 1h3v3l1-1 2 2-2 2-1-1v3h-3l1 1-2 2-2-2 1-1H8v-3l-1 1-2-2 2-2 1 1V6h3l-1-1 2-2Z"/>,
+  move: <path d="m4 4 4 4-4 4M20 4l-4 4 4 4"/>,
   frame: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>,
   square: <rect x="5" y="5" width="14" height="14" rx="1"/>,
   shape: <rect x="5" y="5" width="14" height="14" rx="1"/>,
@@ -44,7 +45,13 @@ const paths: Record<IconName, React.ReactNode> = {
   eyedropper: <><path d="m4 20 4-4"/><path d="m14 4 6 6"/><path d="m6 14 4 4"/><path d="M17 3l4 4-2 2-4-4 2-2Z"/></>,
   image: <><rect x="4" y="5" width="16" height="14" rx="2"/><circle cx="9" cy="10" r="1.5"/><path d="m4 16 5-5 4 4 3-3 4 4"/></>,
   scale: <><path d="M4 14V4h10"/><path d="M14 4l6 6"/><path d="M10 10l10 10"/></>,
-  slice: <><path d="M4 4v16M20 4v16"/><path d="M4 12h16"/></>
+  slice: <><path d="M4 4v16M20 4v16"/><path d="M4 12h16"/></>,
+  line: <path d="M5 19 19 5"/>,
+  arrow: <path d="M5 12h12M13 6l6 6-6 6"/>,
+  ellipse: <ellipse cx="12" cy="12" rx="8" ry="6"/>,
+  polygon: <path d="m12 3 7 4v10l-7 4-7-4V7l7-4Z"/>,
+  section: <path d="M4 6h16M4 12h16M4 18h10"/>,
+  textPath: <><path d="M4 16c4-6 8 6 16 0"/><path d="M5 5h14M12 5v14"/></>
 };
 
 export function Icon({ name, size = 16, ...props }: { name: IconName; size?: number } & SVGProps<SVGSVGElement>) {

@@ -118,7 +118,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .editor-toolbar__menu { position: absolute; bottom: calc(100% + 8px); left: 50%; min-width: 188px; padding: 6px; transform: translateX(-50%); border: 1px solid var(--tk-border-strong); border-radius: 10px; background: var(--tk-surface); box-shadow: var(--tk-shadow-float); }
 .editor-toolbar__menu-item { display: flex; width: 100%; justify-content: space-between; align-items: center; gap: 12px; border: 0; border-radius: 6px; padding: 8px 9px; color: var(--tk-text); background: transparent; font-size: 12px; font-weight: 600; text-align: left; }
 .editor-toolbar__menu-item:hover, .editor-toolbar__menu-item.is-active { background: var(--tk-surface-hover); color: var(--tk-primary); }
-.editor-toolbar__menu-item kbd { color: var(--tk-text-faint); font: 10px var(--tk-mono); }
+.editor-toolbar__menu-leading { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.editor-toolbar__menu-check { width: 12px; color: var(--tk-primary); font-size: 11px; line-height: 1; flex: 0 0 12px; }
+.editor-toolbar__menu-icon { display: grid; place-items: center; width: 16px; height: 16px; color: var(--tk-text-muted); flex: 0 0 16px; }
+.editor-toolbar__menu-item.is-active .editor-toolbar__menu-icon { color: var(--tk-text); }
+.editor-toolbar__menu-item kbd { color: var(--tk-text-faint); font: 10px var(--tk-mono); flex: 0 0 auto; }
 .editor-toolbar__hint { position: absolute; z-index: 19; bottom: 72px; left: 50%; transform: translateX(-50%); padding: 4px 10px; border: 1px solid var(--tk-border); border-radius: 6px; color: var(--tk-text-muted); background: rgb(21 22 28 / .88); font-size: 10px; font-weight: 650; white-space: nowrap; pointer-events: none; }
 @keyframes tk-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @media (max-width: 760px) { .tk-sidebar { width: 62px; padding-inline: 8px; } .tk-logo { justify-content: center; } .tk-logo > span:last-child, .tk-nav a span, .tk-sidebar-foot { display: none; } .tk-nav a { justify-content: center; } .tk-page { padding: 22px 16px; } .tk-page-header { align-items: stretch; flex-direction: column; } }
