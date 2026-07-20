@@ -20,6 +20,8 @@
     "matches": ["http://*/*", "https://*/*"],
     "js": [
       "tinkr-config.js",
+      "packages/canvas/icons.js",
+      "packages/canvas/stroke-engine.js",
       "packages/canvas/tool-definitions.js",
       "packages/canvas/tool-controller.js",
       "packages/canvas/vector-engine.js",
