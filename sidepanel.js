@@ -92,7 +92,7 @@ async function refreshPanelState() {
     return;
   }
 
-  resetPanelUi(s ? "Design Mode is off on this page." : "Reload the page if Tinkr tools don't appear.");
+  resetPanelUi(s ? "Design Mode is off on this page — enter again to resume editing." : "Reload the page if Tinkr tools don't appear.");
 }
 
 function setModeUi(active) {
