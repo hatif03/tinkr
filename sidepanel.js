@@ -14,6 +14,7 @@ const exitMode = $("exit-mode");
 const modeLabel = $("mode-label");
 const modeBadge = $("mode-badge");
 const statusEl = $("status");
+const saveState = $("save-state");
 
 async function tabId() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -44,7 +45,6 @@ function setModeUi(active) {
   tools.classList.toggle("tinkr-hide", !active);
   idle.classList.toggle("tinkr-hide", active);
   exitMode.classList.toggle("tinkr-hide", !active);
-  toggle.textContent = active ? "Enter Design Mode" : "Enter Design Mode";
 }
 
 function switchPanel(name) {
@@ -54,14 +54,28 @@ function switchPanel(name) {
   send("setPanel", { panel: name }).catch(() => {});
 }
 
+function setUiMode(mode) {
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  if (mode === "dev") send("setDevMode", { on: true }).catch(() => {});
+  else if (mode === "proto") send("setProtoMode", { on: true }).catch(() => {});
+  else send("setDevMode", { on: false }).catch(() => {});
+}
+
 function renderFromState(s) {
   if (!s) return;
   pageState = s;
   setModeUi(s.active);
   if (!s.active) return;
 
-  statusEl.textContent = s.status || "Select any page element to begin.";
+  statusEl.textContent = s.status || "Use the floating toolbar on the page.";
+  const syncing = /saving|sync/i.test(s.status || "");
+  const warning = /failed|offline|reattach|attention/i.test(s.status || "");
+  saveState.textContent = warning ? "Needs attention" : syncing ? "Saving" : s.signedIn ? "Saved" : "Local";
+  saveState.className = `save-state ${warning ? "warning" : syncing ? "saving" : s.signedIn ? "saved" : ""}`;
   if (s.pinCommentMode) statusEl.innerHTML = '<span class="pin-mode">Click the page to pin a comment</span>';
+
+  const uiMode = s.tool?.devMode ? "dev" : s.tool?.protoMode ? "proto" : "design";
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("active", b.dataset.mode === uiMode));
 
   document.querySelectorAll("[data-breakpoint]").forEach(b => b.classList.toggle("active", b.dataset.breakpoint === s.breakpoint));
 
@@ -102,6 +116,14 @@ function renderFromState(s) {
     });
   } else ctx.innerHTML = "";
 
+  $("text-styles").innerHTML = (s.styles?.text || []).map(st => `<button class="style-chip" data-apply-text="${st.id}">${st.name}</button>`).join("");
+  $("text-styles").querySelectorAll("[data-apply-text]").forEach(b => b.onclick = () => send("context", { action: "apply-text-style", value: b.dataset.applyText }));
+  $("color-styles").innerHTML = (s.styles?.colors || []).map(c => `<button class="style-chip color" data-apply-color="${c.id}" style="--swatch:${c.value}"><span></span>${c.name}</button>`).join("");
+  $("color-styles").querySelectorAll("[data-apply-color]").forEach(b => b.onclick = () => send("context", { action: "apply-color-style", value: b.dataset.applyColor }));
+
+  const layerItems = (s.vectorLayers || []).map(v => `<li><button data-vector="${v.id}">${v.type} · ${v.id.slice(0, 8)}</button></li>`).join("");
+  $("layers").innerHTML = layerItems || "<li>No vector layers</li>";
+
   $("sections").innerHTML = (s.sections || []).map(sec => `<li><button data-section="${sec.id}">${sec.label}</button></li>`).join("") || "<li>No sections yet</li>";
   $("sections").querySelectorAll("[data-section]").forEach(b => b.onclick = () => send("scrollSection", { id: b.dataset.section }));
 
@@ -109,7 +131,7 @@ function renderFromState(s) {
   $("token-list").querySelectorAll("[data-token]").forEach(input => input.onchange = () => send("setToken", { key: input.dataset.token, value: input.value }));
 
   $("proto-list").innerHTML = (s.prototypeLinks || []).map(l => `<li>${l.label} → ${l.target}</li>`).join("") || "<li>No prototype links</li>";
-  $("motion-list").innerHTML = (s.motion || []).map(m => `<li>${m.selector} · ${m.property} ${m.duration}</li>`).join("") || "<li>No motion keyframes</li>";
+  $("motion-list").innerHTML = (s.motion || []).map(m => `<li>${m.selector || m.targetId} · ${m.property} ${m.duration}</li>`).join("") || "<li>No motion keyframes</li>";
 
   if (s.devOutput) $("dev-output").textContent = s.devOutput;
 
@@ -124,9 +146,10 @@ function renderFromState(s) {
     document.querySelector('[data-action="apply-lab"]').disabled = !s.labHasOps;
   }
 
-  document.querySelectorAll("[data-panel]").forEach(b => b.classList.toggle("active", b.dataset.panel === s.panel));
+  const panel = s.tool?.devMode ? "inspect" : (s.panel || "design");
+  document.querySelectorAll("[data-panel]").forEach(b => b.classList.toggle("active", b.dataset.panel === panel));
   document.querySelectorAll(".panel").forEach(p => p.classList.add("tinkr-hide"));
-  $(`panel-${s.panel || "design"}`)?.classList.remove("tinkr-hide");
+  $(`panel-${panel}`)?.classList.remove("tinkr-hide");
 }
 
 async function refreshAuth() {
@@ -181,6 +204,7 @@ toggle.onclick = toggleDesignMode;
 exitMode.onclick = toggleDesignMode;
 
 document.querySelectorAll("[data-panel]").forEach(b => b.onclick = () => switchPanel(b.dataset.panel));
+document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => setUiMode(b.dataset.mode));
 
 document.querySelectorAll("[data-action]").forEach(b => b.addEventListener("click", async () => {
   const action = b.dataset.action;
@@ -188,7 +212,14 @@ document.querySelectorAll("[data-action]").forEach(b => b.addEventListener("clic
   if (action === "generate") { await send("generate", { prompt: $("prompt").value.trim() }); return; }
   if (action === "run-lab") { await send("runLab", { code: $("lab-code").value, name: $("lab-name").value }); return; }
   if (action === "add-section") { const label = prompt("Section label", "Hero"); if (label) await send("addSection", { label }); return; }
-  if (action === "pin-comment") { await send("pinComment"); return; }
+  if (action === "copy-css") {
+    const text = $("dev-output")?.textContent || "";
+    navigator.clipboard?.writeText(text);
+    statusEl.textContent = "CSS copied.";
+    return;
+  }
+  if (action === "present") { await send("setProtoMode", { on: true }); return; }
+  if (action === "toggle-timeline") { /* toolbar handles timeline */ statusEl.textContent = "Use ◇ on floating toolbar for timeline."; return; }
   try { await send("action", { name: action }); } catch { statusEl.textContent = "Command failed — is Design Mode on?"; }
 }));
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Tinkr",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Remix live webpages without changing the original site.",
   "permissions": ["storage", "activeTab", "identity", "tabs", "sidePanel"],
   "host_permissions": [
@@ -18,7 +18,16 @@
   "background": { "service_worker": "background.js" },
   "content_scripts": [{
     "matches": ["http://*/*", "https://*/*"],
-    "js": ["tinkr-config.js", "content.js"],
+    "js": [
+      "tinkr-config.js",
+      "packages/canvas/tool-definitions.js",
+      "packages/canvas/tool-controller.js",
+      "packages/canvas/vector-engine.js",
+      "packages/canvas/dev-inspect.js",
+      "packages/canvas/patch-applicator.js",
+      "content-toolbar.js",
+      "content.js"
+    ],
     "css": ["content.css"],
     "run_at": "document_idle"
   }],

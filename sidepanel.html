@@ -15,19 +15,24 @@
             <small id="mode-label">Ready to remix</small>
           </div>
         </div>
-        <span id="mode-badge" class="mode-badge off">Off</span>
+        <div class="topbar-status"><span id="save-state" class="save-state">Local</span><span id="mode-badge" class="mode-badge off">Off</span></div>
       </header>
 
       <section id="idle" class="idle-card">
-        <p class="idle-copy">Select elements on the page and remix styles, layout, and content.</p>
+          <p class="idle-copy">Turn any webpage into a remixable canvas. Select a layer on the page, then refine it here.</p>
         <button id="toggle" class="primary">Enter Design Mode</button>
       </section>
 
       <section id="tools" class="tools tinkr-hide">
+        <div class="mode-pills">
+          <button data-mode="design" class="active">Design</button>
+          <button data-mode="dev">Dev</button>
+          <button data-mode="proto">Proto</button>
+        </div>
         <div class="tabs">
           <button data-panel="design" class="active">Design</button>
           <button data-panel="canvas">Canvas</button>
-          <button data-panel="dev">Dev</button>
+          <button data-panel="inspect">Inspect</button>
           <button data-panel="proto">Proto</button>
         </div>
 
@@ -58,6 +63,14 @@
             <label>Opacity<input data-style="opacity" type="number" min="0" max="1" step=".05"></label>
           </div>
           <div id="context" class="context"></div>
+          <details class="style-lib" open>
+            <summary>Text styles</summary>
+            <div id="text-styles" class="style-list"></div>
+          </details>
+          <details class="style-lib">
+            <summary>Color styles</summary>
+            <div id="color-styles" class="style-list"></div>
+          </details>
           <div class="add-row">
             <button data-add="cta">+ CTA</button>
             <button data-add="testimonial">+ Quote</button>
@@ -71,8 +84,7 @@
           </div>
           <div id="lab" class="lab tinkr-hide">
             <input id="lab-name" placeholder="Code layer name" />
-            <textarea id="lab-code">// Use tinkr.setStyles, tinkr.setText, tinkr.insert, or tinkr.hide
-tinkr.setStyles({ borderRadius: "20px" });</textarea>
+            <textarea id="lab-code">tinkr.setStyles({ borderRadius: "20px" });</textarea>
             <div class="ai-row">
               <button data-action="run-lab">Run sandbox</button>
               <button data-action="apply-lab" disabled>Apply</button>
@@ -90,11 +102,10 @@ tinkr.setStyles({ borderRadius: "20px" });</textarea>
         </div>
 
         <div id="panel-canvas" class="panel tinkr-hide">
-          <div class="section-tools">
-            <button data-action="add-section">+ Section</button>
-            <button data-action="pin-comment">Pin comment</button>
-            <button data-action="toggle-viewport">Pan/zoom</button>
-          </div>
+          <button data-action="add-section" class="full">+ Section</button>
+          <h4 class="panel-sub">Layers</h4>
+          <ul id="layers" class="list"></ul>
+          <h4 class="panel-sub">Sections</h4>
           <ul id="sections" class="list"></ul>
           <div class="tokens">
             <h4>Variables</h4>
@@ -102,22 +113,26 @@ tinkr.setStyles({ borderRadius: "20px" });</textarea>
           </div>
         </div>
 
-        <div id="panel-dev" class="panel tinkr-hide">
+        <div id="panel-inspect" class="panel tinkr-hide">
+          <p class="inspect-hint">Dev Mode — read-only inspect. Toggle with &lt;/&gt; on the floating toolbar.</p>
           <pre id="dev-output" class="dev">Select an element for Dev Mode specs.</pre>
           <button data-action="export-patch">Export patch JSON</button>
+          <button data-action="copy-css" class="secondary">Copy CSS</button>
         </div>
 
         <div id="panel-proto" class="panel tinkr-hide">
           <button data-action="add-hotspot">Link hotspot</button>
+          <button data-action="present" class="secondary">Present</button>
           <ul id="proto-list" class="list"></ul>
           <div class="motion">
             <h4>Motion</h4>
             <button data-action="add-motion">Add fade-in</button>
+            <button data-action="toggle-timeline" class="secondary">Timeline</button>
             <ul id="motion-list" class="list"></ul>
           </div>
         </div>
 
-        <p id="status" class="status">Select any page element to begin.</p>
+        <p id="status" class="status">Tools are on the floating bar at the bottom of the page.</p>
       </section>
 
       <details class="account-drawer">
