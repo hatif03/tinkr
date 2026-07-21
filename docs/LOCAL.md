@@ -64,7 +64,7 @@ docker compose down
 node scripts/dev-docker.mjs
 ```
 
-Guest mode and cloud sync work without an AI key.
+Core canvas and cloud-sync workflows work without an AI key.
 
 ## Stop the stack
 
@@ -117,13 +117,7 @@ Default local anon and service-role keys are documented in [.env.docker.example]
 
 ## Extension-only (no backend)
 
-Design Mode works offline without any services running:
-
-1. Load unpacked extension from repo root
-2. Open any public webpage
-3. Enter Design Mode from the side panel
-
-Cloud sync, dashboard, and sign-in require the stack above.
+You can load the unpacked extension UI without services running, but the current product requires a tinkr session to enter Design Mode. Start the local stack above to sign in, edit pages, save work, or use cloud features.
 
 ## Use hosted Supabase instead
 

@@ -22,6 +22,7 @@ Create **two** Vercel projects from the same GitHub repo:
 In Supabase → Authentication → URL configuration:
 
 - **Site URL:** `https://tinkr-web-henna.vercel.app`
+- Enable the **Email** provider for both password sign-in/sign-up and magic-link sign-in.
 - **Redirect URLs:**
   - `https://tinkr-web-henna.vercel.app/auth/callback`
   - `http://localhost:3000/auth/callback`

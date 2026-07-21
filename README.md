@@ -17,7 +17,7 @@ tinkr is a live-web design layer for founders, builders, and people learning des
 - Move and layer elements freely on the visual canvas, or use structural mode to reorder compatible source-layout siblings.
 - Edit copy, type, color, spacing, radius, image treatment, and layout properties.
 - Add tinkr-owned CTAs, feature cards, testimonials, wireframes, vectors, comments, and assets.
-- Save changes locally first; sign in only when you want cloud projects, reviews, collaboration, or history.
+- Record changes as reversible patches, then sync projects, reviews, collaboration, and history to tinkr Cloud when signed in.
 
 tinkr is intentionally not a website copier, publisher, or production-code editor. It is a place to explore an idea quickly and keep the work you make.
 
@@ -32,7 +32,7 @@ Every remix is private by default and can be reopened against the original URL. 
 ## Try it
 
 1. Load the extension in Chrome, then open any `http` or `https` webpage.
-2. Open the tinkr side panel and choose **Enter Design Mode**. Guest mode works without an account.
+2. Open the tinkr side panel, sign in, and choose **Enter Design Mode**.
 3. Use the floating toolbar to select, move, pan, scale, add text, draw shapes, comment, prototype, or inspect.
 4. Drag an element to move it freely. Drop it over another layer to place it above that layer.
 5. Use the **Arrange** controls in the side panel to bring a layer forward/backward, place it on top of another layer, switch to structural reorder mode, or create a visual copy.
@@ -113,7 +113,7 @@ Then load this repository as an unpacked extension from `chrome://extensions` (D
 
 ### Extension-only (no backend)
 
-Design Mode works offline without running any services — load the unpacked extension and open any public webpage.
+You can load the extension UI without starting services, but a tinkr account and the local stack are required to enter Design Mode, save work, or use cloud features.
 
 ### Manual setup
 
@@ -121,7 +121,38 @@ Design Mode works offline without running any services — load the unpacked ext
 node scripts/setup.mjs --manual
 ```
 
-See [docs/LOCAL.md](docs/LOCAL.md) for Supabase, env files, and troubleshooting.
+See [INSTALLATION.md](INSTALLATION.md) for a judge/tester path, or [docs/LOCAL.md](docs/LOCAL.md) for full contributor setup, Supabase, environment files, and troubleshooting.
+
+## Hackathon submission
+
+Read the complete judge narrative in [HACKATHON_SUBMISSION.md](HACKATHON_SUBMISSION.md). It covers the inspiration, product, architecture, challenges, lessons, and roadmap.
+
+## Built with
+
+- **Chrome Extension Manifest V3**, JavaScript, HTML, and CSS for the live-page Design Mode and side panel.
+- **Next.js, React, and TypeScript** for the dashboard, project library, review pages, and authentication UI.
+- **Node.js and Express** for the tinkr API and safe, structured AI-patch transport.
+- **Supabase** for authentication, private project data, revisions, storage, and access control.
+- **Docker and the Supabase CLI** for reproducible local development.
+- An **OpenAI-compatible AI provider** for selection-scoped patch previews; tinkr never sends a whole webpage or executes arbitrary generated scripts.
+
+### Built with Codex and GPT-5.6 Terra
+
+tinkr was built with Codex as an active product and engineering collaborator, powered by **GPT-5.6 Terra**. We used Planning Mode to turn a broad idea—"make any webpage a design canvas"—into bounded, testable work across the extension, dashboard, persistence, and safety model.
+
+- **Medium reasoning** was used for focused UI work, component implementation, documentation, and iterative fixes.
+- **High reasoning** was used for extension architecture, DOM patching, Figma-inspired interaction design, and reliability reviews.
+- **Ultra reasoning** was reserved for higher-risk problems such as idempotent replay, source-anchor safety, session handoff, cloud-sync conflicts, and the distinction between native DOM edits and visual proxies.
+- The **Supabase plugin** informed authentication, storage, RLS, migration, and session-security decisions.
+- The **GitHub plugin** supported repository orientation, commit/review workflows, and keeping the implementation traceable as the project evolved.
+
+GPT-5.6 Terra was used in the development process; the runtime AI feature remains provider-configurable and is intentionally constrained to safe, inspectable patch operations.
+
+## Project links and judge testing
+
+- Source: [github.com/hatif03/tinkr](https://github.com/hatif03/tinkr)
+- Full installation and testing guide: [INSTALLATION.md](INSTALLATION.md)
+- Hosted dashboard beta, when the deployment is enabled: [tinkr-web-henna.vercel.app](https://tinkr-web-henna.vercel.app)
 
 ## Project status
 
