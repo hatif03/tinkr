@@ -1,172 +1,308 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="sidepanel.css">
+    <title>tinkr</title>
   </head>
   <body>
     <main>
       <header class="topbar">
         <div class="brand">
-          <img src="assets/brand/tinkr-48.png" alt="" class="brand-mark">
-          <span>✦</span>
-          <div>
+          <img class="brand-mark" src="assets/brand/tinkr-48.png" alt="" />
+          <div class="brand-copy">
             <strong>tinkr</strong>
             <small id="mode-label">Ready to remix</small>
           </div>
         </div>
-        <div class="topbar-status"><span id="save-state" class="save-state">Local</span><span id="mode-badge" class="mode-badge off">Off</span></div>
+        <div class="topbar-status" aria-label="Workspace status">
+          <span id="save-state" class="save-state" role="status">Local</span>
+          <span id="mode-badge" class="mode-badge off">Off</span>
+        </div>
       </header>
 
-      <section id="idle" class="idle-card">
-          <p class="idle-copy">Turn any webpage into a remixable canvas. Select a layer on the page, then refine it here.</p>
-        <button id="toggle" class="primary">Enter Design Mode</button>
+      <section id="idle" class="idle-card" aria-labelledby="idle-title">
+        <p class="eyebrow">LIVE WEB CANVAS</p>
+        <h1 id="idle-title">Make this page your starting point.</h1>
+        <p class="idle-copy">Sign in to select, remix, and save layers from any webpage.</p>
+        <button id="toggle" class="primary">Sign in to start editing</button>
       </section>
 
-      <section id="tools" class="tools tinkr-hide">
-        <div class="mode-pills">
-          <button data-mode="design" class="active"><span class="pill-icon pill-design" aria-hidden="true"></span>Design</button>
-          <button data-mode="dev"><span class="pill-icon pill-dev" aria-hidden="true"></span>Dev</button>
-          <button data-mode="proto"><span class="pill-icon pill-proto" aria-hidden="true"></span>Proto</button>
+      <section id="tools" class="tools tinkr-hide" aria-label="tinkr editor">
+        <div class="workspace-status">
+          <div id="selection-summary" class="selection-summary" aria-live="polite">
+            <span class="selection-kicker">Selection</span>
+            <strong id="selection-name">No layer selected</strong>
+            <span id="selection-meta">Click a visible layer on the page.</span>
+          </div>
+          <button id="shortcut-reference" class="icon-button" type="button" data-action="shortcuts" aria-label="Open keyboard shortcuts" title="Keyboard shortcuts (?)">?</button>
+        </div>
+
+        <div class="mode-pills" role="tablist" aria-label="Editor mode">
+          <button type="button" data-mode="design" class="active" role="tab" aria-controls="panel-design" aria-selected="true"><span class="pill-icon pill-design" aria-hidden="true"></span>Design</button>
+          <button type="button" data-mode="dev" role="tab" aria-controls="panel-inspect" aria-selected="false"><span class="pill-icon pill-dev" aria-hidden="true"></span>Dev</button>
+          <button type="button" data-mode="proto" role="tab" aria-controls="panel-proto" aria-selected="false"><span class="pill-icon pill-proto" aria-hidden="true"></span>Prototype</button>
         </div>
         <p id="tool-active" class="tool-active tinkr-hide" aria-live="polite"></p>
         <p id="cross-tab-hint" class="cross-tab-hint tinkr-hide" aria-live="polite"></p>
-        <div class="tabs">
-          <button data-panel="design" class="active">Design</button>
-          <button data-panel="canvas">Canvas</button>
-          <button data-panel="inspect">Inspect</button>
-          <button data-panel="proto">Proto</button>
-        </div>
 
-        <div id="panel-design" class="panel">
-          <div id="crumbs" class="crumbs"></div>
-          <div id="presence" class="presence"></div>
-          <div class="history-actions">
-            <button data-action="undo" id="btn-undo" title="Ctrl+Z">Undo</button>
-            <button data-action="redo" id="btn-redo" title="Ctrl+Shift+Z">Redo</button>
-            <button data-action="delete" class="danger" title="Delete or Backspace">Delete</button>
-          </div>
-          <div class="actions">
-            <button data-action="duplicate">Duplicate</button>
-            <button data-action="copy">Copy</button>
-            <button data-action="paste">Paste</button>
-            <button data-action="save">Save</button>
-          </div>
-          <div class="actions">
-            <button data-action="lab">Code Lab</button>
-            <button data-action="checkpoint">Checkpoint</button>
-            <button data-action="reset-page" class="danger">Reset</button>
-          </div>
-          <div class="breakpoints">
-            <button data-breakpoint="base" class="active">Base</button>
-            <button data-breakpoint="768">Tablet</button>
-            <button data-breakpoint="480">Mobile</button>
-          </div>
-          <div class="controls">
-            <label>Local font<select id="local-fonts"><option value="">Loading fonts…</option></select></label>
-            <label>Background<input data-style="backgroundColor" type="color"></label>
-            <label>Text color<input data-style="color" type="color"></label>
-            <label>Font size<input data-style="fontSize" type="number" min="8" max="120"></label>
-            <label>Weight<select data-style="fontWeight"><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semibold</option><option value="700">Bold</option><option value="800">Extra bold</option></select></label>
-            <label>Line height<input data-style="lineHeight" type="number" min="0" max="160"></label>
-            <label>Tracking<input data-style="letterSpacing" type="number" min="-10" max="40" step=".25"></label>
-            <label>Align<select data-style="textAlign"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option><option value="justify">Justify</option></select></label>
-            <label>Padding<input data-style="padding" type="number" min="0" max="300"></label>
-            <label>Gap<input data-style="gap" type="number" min="0" max="300"></label>
-            <label>Radius<input data-style="borderRadius" type="number" min="0" max="200"></label>
-            <label>Opacity<input data-style="opacity" type="number" min="0" max="1" step=".05"></label>
-            <label>Image fit<select data-style="objectFit"><option value="cover">Cover</option><option value="contain">Contain</option><option value="fill">Fill</option><option value="none">None</option></select></label>
-            <label>Image position<input data-style="objectPosition" placeholder="50% 50%"></label>
-            <label>Filters<input data-style="filter" placeholder="grayscale(1)"></label>
-          </div>
-          <div id="context" class="context"></div>
-          <details class="style-lib" open>
-            <summary>Text styles</summary>
-            <div id="text-styles" class="style-list"></div>
-          </details>
-          <details class="style-lib">
-            <summary>Color styles</summary>
-            <div id="color-styles" class="style-list"></div>
-          </details>
-          <div class="add-row">
-            <button data-add="cta">+ CTA</button>
-            <button data-add="testimonial">+ Quote</button>
-            <button data-add="feature">+ Feature</button>
-            <button data-add="wireframe">+ Frame</button>
-          </div>
-          <div class="autolayout">
-            <button data-autolayout="flex">Flex wrap</button>
-            <button data-autolayout="grid">Grid 2-col</button>
-            <button data-autolayout="gap">Token gap</button>
-          </div>
-          <div id="lab" class="lab tinkr-hide">
-            <input id="lab-name" placeholder="Code layer name" />
-            <textarea id="lab-code">tinkr.setStyles({ borderRadius: "20px" });</textarea>
-            <div class="ai-row">
-              <button data-action="run-lab">Run sandbox</button>
-              <button data-action="apply-lab" disabled>Apply</button>
+        <nav class="workspace-tabs" aria-label="Editor workspace" role="tablist">
+          <button type="button" data-workspace="design" class="active" role="tab" aria-controls="panel-design" aria-selected="true">Design</button>
+          <button type="button" data-workspace="layers" role="tab" aria-controls="panel-canvas" aria-selected="false">Layers</button>
+          <button type="button" data-workspace="assets" role="tab" aria-controls="panel-canvas" aria-selected="false">Assets</button>
+          <button type="button" data-workspace="components" role="tab" aria-controls="panel-canvas" aria-selected="false">Components</button>
+          <button type="button" data-workspace="variables" role="tab" aria-controls="panel-canvas" aria-selected="false">Variables</button>
+          <button type="button" data-workspace="inspect" role="tab" aria-controls="panel-inspect" aria-selected="false">Inspect</button>
+          <button type="button" data-workspace="proto" role="tab" aria-controls="panel-proto" aria-selected="false">Prototype</button>
+        </nav>
+
+        <div id="panel-design" class="panel" role="tabpanel" aria-label="Design">
+          <section class="panel-card selection-card" aria-labelledby="selected-layer-heading">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">ACTIVE LAYER</p>
+                <h2 id="selected-layer-heading">Selection</h2>
+              </div>
+              <span id="selection-kind" class="selection-kind">None</span>
             </div>
-            <pre id="lab-output" class="preview tinkr-hide"></pre>
-          </div>
-          <div class="ai">
-            <textarea id="prompt" placeholder="Make this feel like a waitlist for an AI finance assistant"></textarea>
+            <div id="crumbs" class="crumbs" aria-label="Layer path"></div>
+            <p id="selection-empty" class="empty-state compact">Select the exact text, image, button, or section you want to remix.</p>
+            <div id="presence" class="presence" aria-label="Active collaborators"></div>
+          </section>
+
+          <section class="panel-card" aria-labelledby="history-heading">
+            <div class="section-heading compact-heading"><h2 id="history-heading">History</h2><span id="history-count" class="muted">0 edits</span></div>
+            <div class="history-actions">
+              <button type="button" data-action="undo" id="btn-undo" title="Undo (Ctrl/Command + Z)">Undo</button>
+              <button type="button" data-action="redo" id="btn-redo" title="Redo (Ctrl/Command + Shift + Z)">Redo</button>
+              <button type="button" data-action="delete" class="danger" title="Delete (Delete or Backspace)">Delete</button>
+            </div>
+          </section>
+
+          <section id="context-card" class="panel-card" aria-labelledby="properties-heading">
+            <div class="section-heading"><div><p class="eyebrow">CONTEXTUAL</p><h2 id="properties-heading">Properties</h2></div><span id="editability" class="muted">Choose a layer</span></div>
+            <div id="context" class="context"></div>
+
+            <details class="property-group" open>
+              <summary>Type and appearance</summary>
+              <div class="controls">
+                <label data-control="font">Local font<select id="local-fonts"><option value="">Loading fonts…</option></select></label>
+                <label data-control="background">Background<input data-style="backgroundColor" type="color" aria-label="Background color"></label>
+                <label data-control="text">Text color<input data-style="color" type="color" aria-label="Text color"></label>
+                <label data-control="text">Font size<input data-style="fontSize" type="number" min="8" max="120"></label>
+                <label data-control="text">Weight<select data-style="fontWeight"><option value="400">Regular</option><option value="500">Medium</option><option value="600">Semibold</option><option value="700">Bold</option><option value="800">Extra bold</option></select></label>
+                <label data-control="text">Line height<input data-style="lineHeight" type="number" min="0" max="160"></label>
+                <label data-control="text">Tracking<input data-style="letterSpacing" type="number" min="-10" max="40" step=".25"></label>
+                <label data-control="text">Alignment<select data-style="textAlign"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option><option value="justify">Justify</option></select></label>
+                <label data-control="layout">Padding<input data-style="padding" type="number" min="0" max="300"></label>
+                <label data-control="layout">Gap<input data-style="gap" type="number" min="0" max="300"></label>
+                <label data-control="layout">Radius<input data-style="borderRadius" type="number" min="0" max="200"></label>
+                <label data-control="layout">Opacity<input data-style="opacity" type="number" min="0" max="1" step=".05"></label>
+                <label data-control="image">Image fit<select data-style="objectFit"><option value="cover">Cover</option><option value="contain">Contain</option><option value="fill">Fill</option><option value="none">None</option></select></label>
+                <label data-control="image">Image position<input data-style="objectPosition" placeholder="50% 50%"></label>
+                <label data-control="image">Filters<input data-style="filter" placeholder="grayscale(1)"></label>
+              </div>
+              <p id="property-hint" class="field-hint">Select a layer to edit its visual properties.</p>
+            </details>
+          </section>
+
+          <section class="panel-card" aria-labelledby="layout-heading">
+            <div class="section-heading"><div><p class="eyebrow">LAYOUT</p><h2 id="layout-heading">Move and arrange</h2></div><span id="move-mode-label" class="muted">Visual canvas</span></div>
+            <div class="breakpoints" aria-label="Responsive change set">
+              <button type="button" data-breakpoint="base" class="active">Base</button>
+              <button type="button" data-breakpoint="768">Tablet</button>
+              <button type="button" data-breakpoint="480">Mobile</button>
+            </div>
+            <p class="field-hint">Free move keeps the source layout intact. Reorder layout changes compatible flex or grid structure.</p>
+          </section>
+
+          <section class="panel-card library-card" aria-labelledby="styles-heading">
+            <div class="section-heading"><div><p class="eyebrow">LIBRARY</p><h2 id="styles-heading">Reusable styles</h2></div></div>
+            <details class="style-lib" open>
+              <summary>Text styles</summary>
+              <div id="text-styles" class="style-list"></div>
+            </details>
+            <details class="style-lib">
+              <summary>Color styles</summary>
+              <div id="color-styles" class="style-list"></div>
+            </details>
+          </section>
+
+          <section class="panel-card" aria-labelledby="insert-heading">
+            <div class="section-heading"><div><p class="eyebrow">INSERT</p><h2 id="insert-heading">Add to this remix</h2></div></div>
+            <div class="add-row">
+              <button type="button" data-add="cta">CTA</button>
+              <button type="button" data-add="testimonial">Quote</button>
+              <button type="button" data-add="feature">Feature</button>
+              <button type="button" data-add="wireframe">Frame</button>
+            </div>
+            <div class="autolayout">
+              <button type="button" data-autolayout="flex">Flex wrap</button>
+              <button type="button" data-autolayout="grid">Grid 2 columns</button>
+              <button type="button" data-autolayout="gap">Use token gap</button>
+            </div>
+          </section>
+
+          <section class="panel-card ai-card" aria-labelledby="ai-heading">
+            <div class="section-heading"><div><p class="eyebrow">AI ASSIST</p><h2 id="ai-heading">Propose a selected-layer edit</h2></div></div>
+            <p class="field-hint">AI previews safe changes to the selected layer. Nothing applies until you approve it.</p>
+            <textarea id="prompt" placeholder="Turn this into a waitlist for an AI finance assistant"></textarea>
             <div class="ai-row">
-              <button data-action="generate">Preview AI patch</button>
-              <button data-action="apply" disabled>Apply</button>
+              <button type="button" data-action="generate">Preview patch</button>
+              <button type="button" data-action="cancel-generate" class="secondary tinkr-hide">Cancel</button>
+              <button type="button" data-action="apply" disabled>Apply</button>
             </div>
             <pre id="preview" class="preview tinkr-hide"></pre>
+          </section>
+
+          <section id="lab" class="panel-card lab tinkr-hide" aria-labelledby="lab-heading">
+            <div class="section-heading"><div><p class="eyebrow">CODE LAB</p><h2 id="lab-heading">Saved design logic</h2></div></div>
+            <label>Lab name<input id="lab-name" placeholder="Responsive card grid"></label>
+            <label>Sandbox code<textarea id="lab-code">tinkr.setStyles({ borderRadius: "20px" });</textarea></label>
+            <div class="ai-row">
+              <button type="button" data-action="run-lab">Run preview</button>
+              <button type="button" data-action="apply-lab" disabled>Apply</button>
+            </div>
+            <pre id="lab-output" class="preview tinkr-hide"></pre>
+          </section>
+
+          <div class="utility-actions" aria-label="Project actions">
+            <button type="button" data-action="duplicate">Duplicate</button>
+            <button type="button" data-action="copy">Copy</button>
+            <button type="button" data-action="paste">Paste</button>
+            <button type="button" data-action="save">Save</button>
+            <button type="button" data-action="lab">Code Lab</button>
+            <button type="button" data-action="checkpoint">Checkpoint</button>
+            <button type="button" data-action="reset-page" class="danger">Reset page</button>
           </div>
         </div>
 
-        <div id="panel-canvas" class="panel tinkr-hide">
-          <div class="canvas-tabs" role="tablist">
-            <button class="active" data-canvas-tab="layers">Layers</button><button data-canvas-tab="assets">Assets</button><button data-canvas-tab="components">Components</button><button data-canvas-tab="variables">Variables</button>
-          </div>
-          <div data-canvas-view="layers"><button data-action="add-section" class="full">+ Section</button><h4 class="panel-sub">Vector layers</h4><ul id="layers" class="list"></ul><h4 class="panel-sub">Sections</h4><ul id="sections" class="list"></ul></div>
-          <div data-canvas-view="assets" class="tinkr-hide"><button id="asset-upload" class="full">Upload image or video</button><p class="canvas-hint">Uploads become tinkr-owned layers. The source page is never modified.</p><ul id="assets-list" class="list"></ul></div>
-          <div data-canvas-view="components" class="tinkr-hide"><p class="canvas-hint">Save selected sanitized layers for reuse across this remix.</p><button id="make-component" class="full">Make component from selection</button><ul id="components-list" class="list"></ul></div>
-          <div data-canvas-view="variables" class="tinkr-hide"><div class="variable-form"><input id="variable-name" placeholder="Variable name"/><select id="variable-type"><option value="color">Color</option><option value="spacing">Spacing</option><option value="radius">Radius</option><option value="typography">Typography</option></select><input id="variable-value" placeholder="#c9ff46 or 16px"/><button id="variable-create">Create variable</button></div><h4 class="panel-sub">Variables</h4><ul id="variables-list" class="list"></ul><div class="tokens"><h4>Page tokens</h4><div id="token-list"></div></div></div>
+        <div id="panel-canvas" class="panel tinkr-hide" role="tabpanel" aria-label="Canvas library">
+          <section class="panel-card canvas-card">
+            <div class="section-heading"><div><p class="eyebrow">WEB CANVAS</p><h2 id="canvas-heading">Layers</h2></div><span id="canvas-count" class="muted">0 items</span></div>
+            <p id="canvas-description" class="canvas-hint">Source-backed layers and tinkr-owned layers in this remix.</p>
+            <div class="canvas-tabs" role="tablist" aria-label="Canvas library">
+              <button type="button" class="active" data-canvas-tab="layers" role="tab" aria-controls="canvas-view-layers" aria-selected="true">Layers</button>
+              <button type="button" data-canvas-tab="assets" role="tab" aria-controls="canvas-view-assets" aria-selected="false">Assets</button>
+              <button type="button" data-canvas-tab="components" role="tab" aria-controls="canvas-view-components" aria-selected="false">Components</button>
+              <button type="button" data-canvas-tab="variables" role="tab" aria-controls="canvas-view-variables" aria-selected="false">Variables</button>
+            </div>
+
+            <div id="canvas-view-layers" data-canvas-view="layers" role="tabpanel">
+              <div class="canvas-actions"><button type="button" data-action="add-section" class="full">Add section</button><button type="button" data-action="layer-picker" class="secondary">Pick layer</button></div>
+              <p id="layers-empty" class="empty-state compact">Your selected source layer and any tinkr-owned vectors, visual copies, and sections will appear here.</p>
+              <ul id="layers" class="layer-list" aria-label="Layers"></ul>
+              <h3 class="panel-sub">Sections</h3>
+              <ul id="sections" class="list"></ul>
+            </div>
+
+            <div id="canvas-view-assets" data-canvas-view="assets" class="tinkr-hide" role="tabpanel">
+              <button type="button" id="asset-upload" class="full">Upload image or video</button>
+              <p class="canvas-hint">Uploads become tinkr-owned layers. The source page is never modified.</p>
+              <p id="assets-empty" class="empty-state compact">No uploaded assets. Add one to reuse it in this remix.</p>
+              <ul id="assets-list" class="list"></ul>
+            </div>
+
+            <div id="canvas-view-components" data-canvas-view="components" class="tinkr-hide" role="tabpanel">
+              <p class="canvas-hint">Save a sanitized selection as a reusable tinkr component. Instances remain safe, local remix layers.</p>
+              <button type="button" id="make-component" class="full">Make component from selection</button>
+              <p id="components-empty" class="empty-state compact">No reusable components yet. Select a layer, then make it reusable.</p>
+              <ul id="components-list" class="list"></ul>
+            </div>
+
+            <div id="canvas-view-variables" data-canvas-view="variables" class="tinkr-hide" role="tabpanel">
+              <p class="canvas-hint">Variables make shared color, spacing, radius, and typography values easier to reuse.</p>
+              <div class="variable-form">
+                <label class="sr-only" for="variable-name">Variable name</label><input id="variable-name" placeholder="Brand accent">
+                <label class="sr-only" for="variable-type">Variable type</label><select id="variable-type"><option value="color">Color</option><option value="spacing">Spacing</option><option value="radius">Radius</option><option value="typography">Typography</option></select>
+                <label class="sr-only" for="variable-value">Variable value</label><input id="variable-value" placeholder="#c9ff46 or 16px">
+                <button type="button" id="variable-create">Create variable</button>
+              </div>
+              <p id="variables-empty" class="empty-state compact">No variables yet. Extract tokens from a selection or create one here.</p>
+              <ul id="variables-list" class="list"></ul>
+              <div class="tokens"><h3>Page tokens</h3><div id="token-list"></div></div>
+            </div>
+          </section>
         </div>
 
-        <div id="panel-inspect" class="panel tinkr-hide">
-          <p class="inspect-hint">Dev Mode — read-only inspect. Toggle with the bracket icon on the floating toolbar.</p>
-          <pre id="dev-output" class="dev">Select an element for Dev Mode specs.</pre>
-          <h4 class="panel-sub">Accessibility</h4>
-          <pre id="a11y-output" class="dev">Select an element for role, label, and contrast.</pre>
-          <button data-action="export-patch">Export patch JSON</button>
-          <button data-action="export-slice" class="secondary">Export viewport PNG</button>
-          <button data-action="copy-css" class="secondary">Copy CSS</button>
+        <div id="panel-inspect" class="panel tinkr-hide" role="tabpanel" aria-label="Inspect">
+          <section class="panel-card dev-card">
+            <div class="section-heading"><div><p class="eyebrow">DEV MODE</p><h2>Inspect</h2></div><span class="mode-tag dev-tag">Read only</span></div>
+            <p class="inspect-hint">Inspect source anchors, computed values, accessibility, and the patch diff without changing the page.</p>
+            <h3 class="panel-sub">Layer spec</h3>
+            <pre id="dev-output" class="dev">Select an element for Dev Mode specs.</pre>
+            <h3 class="panel-sub">Accessibility</h3>
+            <pre id="a11y-output" class="dev">Select an element for role, label, and contrast.</pre>
+            <div class="stack-actions">
+              <button type="button" data-action="export-patch">Export patch JSON</button>
+              <button type="button" data-action="copy-css" class="secondary">Copy CSS</button>
+              <button type="button" data-action="export-slice" class="secondary">Export viewport PNG</button>
+            </div>
+          </section>
         </div>
 
-        <div id="panel-proto" class="panel tinkr-hide">
-          <p class="proto-hint">Present = preview in browser · Motion = keyframe timeline</p>
-          <button data-action="add-hotspot">Link hotspot</button>
-          <button data-action="present" class="secondary">Present</button>
-          <ul id="proto-list" class="list"></ul>
-          <div class="motion">
-            <h4>Motion</h4>
-            <button data-action="add-motion">Add fade-in</button>
-            <button data-action="toggle-timeline" class="secondary">Timeline</button>
-            <ul id="motion-list" class="list"></ul>
-          </div>
+        <div id="panel-proto" class="panel tinkr-hide" role="tabpanel" aria-label="Prototype">
+          <section class="panel-card proto-card">
+            <div class="section-heading"><div><p class="eyebrow">SAFE PROTOTYPES</p><h2>Prototype</h2></div><span class="mode-tag proto-tag">Preview only</span></div>
+            <p class="proto-hint">Create safe tinkr interactions and motion. Source-site links and forms never run in Design Mode.</p>
+            <div class="stack-actions">
+              <button type="button" data-action="add-hotspot">Link hotspot</button>
+              <button type="button" data-action="present" class="secondary">Present</button>
+            </div>
+            <ul id="proto-list" class="list"></ul>
+            <div class="motion">
+              <h3>Motion</h3>
+              <p class="canvas-hint">Keyframes apply to tinkr layers and safe CSS overrides.</p>
+              <div class="stack-actions">
+                <button type="button" data-action="add-motion">Add fade-in</button>
+                <button type="button" data-action="toggle-timeline" class="secondary">Open timeline</button>
+              </div>
+              <ul id="motion-list" class="list"></ul>
+            </div>
+          </section>
         </div>
 
-        <p id="status" class="status">Tools are on the floating bar at the bottom of the page.</p>
+        <p id="status" class="status" aria-live="polite">Tools are on the floating bar at the bottom of the page.</p>
       </section>
 
       <details class="account-drawer">
-        <summary>Account &amp; session</summary>
+        <summary>Account and session</summary>
         <div class="account-body">
-          <div id="account" class="account">Edit locally — sign in to save to your library.</div>
-          <p id="footnote" class="footnote">Local edits stay on this device until you sign in and sync to tinkr.</p>
-          <button id="signin" class="secondary">Sign in to save &amp; collaborate</button>
-          <button id="dashboard" class="secondary tinkr-hide">Open dashboard</button>
-          <button id="exit-mode" class="secondary tinkr-hide">Exit Design Mode</button>
-          <button id="signout" class="secondary tinkr-hide">Sign out</button>
+          <div id="account" class="account">Sign in to edit pages and save remixes.</div>
+          <p id="footnote" class="footnote">Design Mode requires a tinkr account.</p>
+          <button type="button" id="signin" class="secondary">Sign in to save and collaborate</button>
+          <button type="button" id="reconnect" class="secondary tinkr-hide">Reconnect sync</button>
+          <button type="button" id="save-local-recovery" class="secondary tinkr-hide">Save local recovery as new remix</button>
+          <button type="button" id="use-cloud-version" class="secondary tinkr-hide">Use cloud version</button>
+          <button type="button" id="dashboard" class="secondary tinkr-hide">Open dashboard</button>
+          <button type="button" id="exit-mode" class="secondary tinkr-hide">Exit Design Mode</button>
+          <button type="button" id="signout" class="secondary tinkr-hide">Sign out</button>
         </div>
       </details>
     </main>
+
+    <dialog id="panel-dialog" class="panel-dialog" aria-labelledby="panel-dialog-title">
+      <form id="panel-dialog-form" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p id="panel-dialog-eyebrow" class="eyebrow">TINKR</p>
+            <h2 id="panel-dialog-title">Edit</h2>
+          </div>
+          <button id="panel-dialog-close" class="icon-button" type="button" aria-label="Close dialog">×</button>
+        </div>
+        <p id="panel-dialog-description" class="dialog-description"></p>
+        <label id="panel-dialog-label" for="panel-dialog-input">Value</label>
+        <input id="panel-dialog-input" class="dialog-input" autocomplete="off">
+        <textarea id="panel-dialog-textarea" class="dialog-input tinkr-hide"></textarea>
+        <p id="panel-dialog-error" class="dialog-error" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="panel-dialog-cancel" type="button" class="secondary">Cancel</button>
+          <button id="panel-dialog-confirm" type="submit" class="primary">Continue</button>
+        </div>
+      </form>
+    </dialog>
+
     <script src="tinkr-config.js"></script>
     <script src="sidepanel.js"></script>
   </body>
