@@ -3,12 +3,13 @@
   "name": "tinkr",
   "version": "0.3.0",
   "description": "Remix live webpages without changing the original site.",
-  "permissions": ["storage", "activeTab", "identity", "tabs", "sidePanel", "scripting", "downloads"],
+  "permissions": ["storage", "unlimitedStorage", "activeTab", "tabs", "sidePanel", "scripting", "downloads", "alarms"],
   "host_permissions": [
     "http://localhost:8787/*",
     "http://localhost:3000/*",
     "https://api.tinkr.com/*",
-    "https://app.tinkr.com/*"
+    "https://app.tinkr.com/*",
+    "https://*.supabase.co/*"
   ],
   "externally_connectable": {
     "matches": ["http://localhost:3000/*", "https://app.tinkr.com/*"]
