@@ -1,5 +1,7 @@
 # Tinkr production deployment
 
+For local development, see [LOCAL.md](LOCAL.md).
+
 ## Prerequisites
 
 - Supabase project with `supabase/schema.sql` and all files in `supabase/migrations/` applied
@@ -81,5 +83,8 @@ Share `https://tinkr-web-henna.vercel.app/install` — testers only need Chrome 
 ## Local contributor setup
 
 ```bash
-node scripts/setup.mjs
+cp .env.docker.example .env.docker
+node scripts/dev-docker.mjs
 ```
+
+See [LOCAL.md](LOCAL.md) for the full guide including manual (non-Docker) setup.

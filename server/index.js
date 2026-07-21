@@ -60,5 +60,7 @@ app.use((error, _req, res, _next) => {
 export default app;
 
 if (!process.env.VERCEL) {
-  app.listen(Number(process.env.PORT || 8787), () => console.log("tinkr AI server listening"));
+  const port = Number(process.env.PORT || 8787);
+  const host = process.env.HOST || "0.0.0.0";
+  app.listen(port, host, () => console.log(`tinkr AI server listening on ${host}:${port}`));
 }

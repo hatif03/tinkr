@@ -100,38 +100,28 @@ The supplied tinkr mark is available as [PNG](assets/brand/tinkr-logo.png) and [
 
 ## Local development
 
-### Extension
+Full instructions: **[docs/LOCAL.md](docs/LOCAL.md)**
 
-Load this repository as an unpacked extension from `chrome://extensions` with Developer mode enabled. The local URLs are configured in [tinkr-config.js](tinkr-config.js).
+### Quick start (Docker)
 
-### Services
-
-| Service | Directory | Default local URL |
-| --- | --- | --- |
-| API | `server/` | `http://localhost:8787` |
-| Dashboard | `web/` | `http://localhost:3000` |
-| Database | `supabase/` | A single operator-managed Supabase project |
-
-```powershell
-# API
-cd server
-Copy-Item .env.example .env
-# Set OPENAI_API_KEY, SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_SERVICE_ROLE_KEY
-npm install
-npm run dev
-
-# Dashboard (separate terminal)
-cd web
-Copy-Item .env.local.example .env.local
-# Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
-# For a published build, also set NEXT_PUBLIC_TINKR_EXTENSION_ID to the
-# packaged extension ID. For an unpacked localhost build, leave it blank:
-# tinkr shows a one-click, explicit local-extension confirmation after sign-in.
-npm install
-npm run dev
+```bash
+cp .env.docker.example .env.docker   # first time only
+node scripts/dev-docker.mjs
 ```
 
-Apply [supabase/schema.sql](supabase/schema.sql), then the migrations in `supabase/migrations/`—including `20260721000000_fix_projects_rls_recursion.sql`—to the managed Supabase project before testing authenticated project access. Enable the Email provider with both password and magic-link sign-in, and add `http://localhost:3000/auth/callback` as an allowed redirect URL.
+Then load this repository as an unpacked extension from `chrome://extensions` (Developer mode). Local URLs are in [tinkr-config.js](tinkr-config.js).
+
+### Extension-only (no backend)
+
+Design Mode works offline without running any services — load the unpacked extension and open any public webpage.
+
+### Manual setup
+
+```bash
+node scripts/setup.mjs --manual
+```
+
+See [docs/LOCAL.md](docs/LOCAL.md) for Supabase, env files, and troubleshooting.
 
 ## Project status
 

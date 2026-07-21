@@ -8,6 +8,7 @@ server/node_modules/
 .env.local
 server/.env
 web/.env.local
+.env.docker
 .demo-chrome-profile/
 scripts/node_modules/
 
@@ -40,3 +41,4 @@ scripts/extension.pem
 # Cursor / agent local state
 .agents/
 .cursor/
+.local/
