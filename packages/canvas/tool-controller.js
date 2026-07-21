@@ -4,7 +4,7 @@
   }
 
   function shouldSelectElements(tool) {
-    return !tool.devMode && tool.group === "move" && tool.variant === "select";
+    return !tool.devMode && !tool.protoMode && tool.group === "move" && tool.variant === "select";
   }
 
   function shouldPan(tool) {
@@ -17,7 +17,7 @@
   }
 
   function isCreationTool(tool) {
-    return ["region", "shape", "draw", "text"].includes(tool.group);
+    return !tool.devMode && !tool.protoMode && ["region", "shape", "draw", "text"].includes(tool.group);
   }
 
   function isCommentTool(tool) {

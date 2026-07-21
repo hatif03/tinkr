@@ -10,6 +10,16 @@
 
   function defaultStroke() { return ink("--tk-ink-vector", "#a8b4ff"); }
   function defaultFill() { return "rgba(168,180,255,0.15)"; }
+  function layerTransform(layer) {
+    const tx = (Number(layer?.tx) || 0) - window.scrollX, ty = (Number(layer?.ty) || 0) - window.scrollY;
+    const sx = Number(layer?.scaleX) || 1, sy = Number(layer?.scaleY) || 1;
+    if (tx === 0 && ty === 0 && sx === 1 && sy === 1) return "";
+    // Keep source geometry intact while letting every owned vector resize from
+    // its own top-left corner. This is deliberately a render transform rather
+    // than rewriting third-party SVG/path points during an interactive drag.
+    const ox = Number(layer?.x) || 0, oy = Number(layer?.y) || 0;
+    return ` transform="translate(${tx} ${ty}) translate(${ox} ${oy}) scale(${sx} ${sy}) translate(${-ox} ${-oy})"`;
+  }
 
   function starPoints(cx, cy, outerR, innerR, points = 5) {
     const pts = [];
@@ -100,20 +110,28 @@
   function renderLayer(layer) {
     const sw = ink("--tk-stroke-width-pencil", "2");
     const cap = 'stroke-linecap="round" stroke-linejoin="round"';
+    const transform = layerTransform(layer);
+    // These are deliberately kept as SVG presentation properties rather than
+    // baking changes into the geometry. That keeps inspector edits reversible
+    // and makes a vector behave like the other Tinkr-owned layers.
+    const opacity = Number.isFinite(Number(layer.opacity))
+      ? ` opacity="${Math.max(0, Math.min(1, Number(layer.opacity)))}"`
+      : "";
+    const radius = Math.max(0, Number(layer.radius) || 0);
     if (layer.type === "rect") {
-      return `<rect data-vector-id="${layer.id}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}" fill="${layer.fill}" stroke="${layer.stroke}" stroke-width="${sw}" ${cap}/>`;
+      return `<rect data-vector-id="${layer.id}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}" rx="${radius}" ry="${radius}" fill="${layer.fill}" stroke="${layer.stroke}" stroke-width="${sw}" ${cap}${opacity}${transform}/>`;
     }
     if (layer.type === "image" && layer.href) {
-      return `<image data-vector-id="${layer.id}" href="${layer.href}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}"/>`;
+      return `<image data-vector-id="${layer.id}" href="${layer.href}" x="${layer.x}" y="${layer.y}" width="${layer.w}" height="${layer.h}" preserveAspectRatio="xMidYMid ${layer.objectFit === "contain" ? "meet" : "slice"}"${opacity}${transform}/>`;
     }
     if (layer.type === "textPath" && layer.d) {
-      return `<path data-vector-id="${layer.id}" id="path-${layer.id}" d="${layer.d}" fill="none" stroke="${layer.stroke || defaultStroke()}" stroke-width="1" opacity="0.3"/>
-        <text data-vector-id="${layer.id}" fill="${layer.fill || ink('--tk-text', '#f6f7fa')}" font-size="${layer.fontSize || 14}" font-family="Inter, sans-serif">
+      return `<path data-vector-id="${layer.id}" id="path-${layer.id}" d="${layer.d}" fill="none" stroke="${layer.stroke || defaultStroke()}" stroke-width="1" opacity="0.3"${transform}/>
+        <text data-vector-id="${layer.id}" fill="${layer.fill || ink('--tk-text', '#f6f7fa')}" font-size="${layer.fontSize || 14}" font-family="Inter, sans-serif"${opacity}${transform}>
           <textPath href="#path-${layer.id}" startOffset="0">${layer.text || "Text on path"}</textPath>
         </text>`;
     }
     if (layer.d) {
-      return `<path data-vector-id="${layer.id}" d="${layer.d}" fill="${layer.fill || "none"}" stroke="${layer.stroke}" stroke-width="${sw}" ${cap}/>`;
+      return `<path data-vector-id="${layer.id}" d="${layer.d}" fill="${layer.fill || "none"}" stroke="${layer.stroke}" stroke-width="${sw}" ${cap}${opacity}${transform}/>`;
     }
     return "";
   }
@@ -142,6 +160,14 @@
   }
 
   function hitTest(layer, px, py) {
+    px -= Number(layer?.tx) || 0;
+    py -= Number(layer?.ty) || 0;
+    const sx = Number(layer?.scaleX) || 1, sy = Number(layer?.scaleY) || 1;
+    const ox = Number(layer?.x) || 0, oy = Number(layer?.y) || 0;
+    // Invert the owned-layer scale before comparing against its original
+    // geometry. It keeps hit testing aligned with what the user sees.
+    px = ox + (px - ox) / sx;
+    py = oy + (py - oy) / sy;
     if (layer.type === "rect" || layer.type === "image") {
       return px >= layer.x && px <= layer.x + layer.w && py >= layer.y && py <= layer.y + layer.h;
     }
