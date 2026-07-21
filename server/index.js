@@ -6,11 +6,32 @@ import { mountCloudRoutes } from "./cloud.js";
 import { createAiPatchHandler, getAiCapabilities } from "./ai.js";
 
 const app = express();
-const allowedOrigins = [
-  /^chrome-extension:\/\//,
-  /^https:\/\/app\.tinkr\.com$/,
-  /^http:\/\/localhost:3000$/
-];
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildAllowedOrigins() {
+  const patterns = [/^chrome-extension:\/\//];
+  const configured = (process.env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean);
+
+  for (const origin of configured) {
+    patterns.push(new RegExp(`^${escapeRegExp(origin)}$`));
+  }
+
+  if (!configured.length) {
+    patterns.push(/^https:\/\/app\.tinkr\.com$/);
+    patterns.push(/^http:\/\/localhost:3000$/);
+  }
+
+  return patterns;
+}
+
+const allowedOrigins = buildAllowedOrigins();
+
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.some(re => re.test(origin))) callback(null, true);
@@ -35,4 +56,9 @@ app.use((error, _req, res, _next) => {
   const status = Number(error?.status) >= 400 ? Number(error.status) : 500;
   return res.status(status).json({ error: "The tinkr API could not complete this request.", code: "API_ERROR", retryable: status >= 500 });
 });
-app.listen(Number(process.env.PORT || 8787), () => console.log("tinkr AI server listening"));
+
+export default app;
+
+if (!process.env.VERCEL) {
+  app.listen(Number(process.env.PORT || 8787), () => console.log("tinkr AI server listening"));
+}

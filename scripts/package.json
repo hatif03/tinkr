@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "archiver": "^7.0.1",
     "@napi-rs/canvas": "^1.0.2",
     "@supabase/supabase-js": "^2.50.0",
     "dotenv": "^16.4.5",

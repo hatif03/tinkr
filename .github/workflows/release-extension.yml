@@ -1,0 +1,59 @@
+name: Release extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install pack dependencies
+        run: npm install
+        working-directory: scripts
+
+      - name: Restore extension signing key
+        env:
+          EXTENSION_PEM: ${{ secrets.EXTENSION_PEM }}
+        run: |
+          if [ -n "$EXTENSION_PEM" ]; then
+            printf '%s' "$EXTENSION_PEM" > scripts/extension.pem
+          fi
+
+      - name: Pack extension
+        env:
+          TINKR_APP_URL: ${{ vars.TINKR_APP_URL }}
+          TINKR_API_URL: ${{ vars.TINKR_API_URL }}
+          EXTENSION_PEM: scripts/extension.pem
+        run: node scripts/pack-extension.mjs
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tinkr-v*.zip
+            dist/tinkr-v*.zip.sha256
+          generate_release_notes: true
+
+      - name: Upload install zip to web public downloads
+        run: |
+          mkdir -p web/public/downloads
+          cp dist/tinkr-v*.zip web/public/downloads/tinkr-extension.zip
+
+      - name: Commit refreshed download artifact
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/public/downloads/tinkr-extension.zip
+          git diff --staged --quiet || git commit -m "chore: refresh extension download artifact"
+          git push
