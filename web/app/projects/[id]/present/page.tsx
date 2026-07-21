@@ -1,13 +1,20 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, isSessionError } from "@/lib/api";
 
 export default async function PresentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) redirect("/login");
-  const { project } = await apiFetch(`/api/projects/${id}`, session.access_token);
+  let project: any;
+  try {
+    ({ project } = await apiFetch(`/api/projects/${id}`, session.access_token));
+  } catch (error) {
+    if (isSessionError(error)) redirect("/login?reason=session-expired");
+    if (error instanceof ApiError && (error.status === 403 || error.status === 404)) notFound();
+    throw error;
+  }
   const links = project.current_draft?.prototypeLinks || [];
 
   return (

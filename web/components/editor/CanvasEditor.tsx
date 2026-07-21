@@ -24,6 +24,7 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const draft = project.current_draft || { patches: [] };
+  const vectorLayers = (draft.vectorLayers as { id: string; type: string }[]) || [];
 
   const postTool = useCallback((group: string, variant: string) => {
     setTool({ group, variant });
@@ -49,17 +50,23 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
     const iframe = iframeRef.current;
     if (!iframe) return;
     const onLoad = () => {
-      try {
-        iframe.contentWindow?.postMessage({ type: "TINKR_APPLY_DRAFT", draft }, "*");
-        setStatus("Canvas ready");
-        setBlocked(false);
-      } catch {
-        setBlocked(true);
-        setStatus("Iframe blocked — use extension for full fidelity");
-      }
+      // A cross-origin iframe is intentionally a lightweight preview. A
+      // postMessage call is not proof that a source page accepted embedding,
+      // so the live-extension launch affordance stays visible at all times.
+      iframe.contentWindow?.postMessage({ type: "TINKR_APPLY_DRAFT", draft }, "*");
+      setStatus("Preview ready — edit live in tinkr");
+      setBlocked(false);
+    };
+    const onError = () => {
+      setBlocked(true);
+      setStatus("Preview could not load — open in tinkr");
     };
     iframe.addEventListener("load", onLoad);
-    return () => iframe.removeEventListener("load", onLoad);
+    iframe.addEventListener("error", onError);
+    return () => {
+      iframe.removeEventListener("load", onLoad);
+      iframe.removeEventListener("error", onError);
+    };
   }, [draft, project.source_url]);
 
   useEffect(() => {
@@ -77,9 +84,10 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
       <aside style={leftRail}>
         <h3>Layers</h3>
         <ul style={list}>
-          {((draft.vectorLayers as { id: string; type: string }[]) || []).map(v => (
+          {vectorLayers.map(v => (
             <li key={v.id}>{v.type}</li>
-          )) || <li style={muted}>DOM + vectors</li>}
+          ))}
+          {vectorLayers.length === 0 && <li style={muted}>DOM + vectors</li>}
         </ul>
         <h3>Variables</h3>
         <pre style={pre}>{JSON.stringify(draft.tokens || {}, null, 2)}</pre>
@@ -92,6 +100,7 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
             <a href={buildTinkrLaunchUrl(project.source_url, project.id)}>Open in tinkr</a>
           </div>
         )}
+        {!blocked && <a style={extensionCta} href={buildTinkrLaunchUrl(project.source_url, project.id)}>Open in tinkr</a>}
         <iframe ref={iframeRef} src={project.source_url} style={iframe} title="Canvas" sandbox="allow-scripts allow-same-origin allow-forms" />
         <FloatingToolbar
           active={tool}
@@ -130,6 +139,7 @@ const leftRail: React.CSSProperties = { background: "#14151b", borderRight: "1px
 const rightRail: React.CSSProperties = { background: "#14151b", borderLeft: "1px solid #30313a", padding: 16, overflow: "auto" };
 const viewport: React.CSSProperties = { position: "relative", background: "#0a0a0d", overflow: "hidden" };
 const iframe: React.CSSProperties = { width: "100%", height: "100%", border: 0, background: "#fff" };
+const extensionCta: React.CSSProperties = { position: "absolute", zIndex: 16, top: 8, right: 8, border: "1px solid #a7ff38", borderRadius: 7, padding: "6px 9px", color: "#e9ffd0", background: "#15161bdd", fontSize: 11, fontWeight: 700, textDecoration: "none" };
 const fallback: React.CSSProperties = { position: "absolute", inset: 0, display: "grid", placeContent: "center", background: "#14151b", zIndex: 5, textAlign: "center", padding: 24 };
 const timeline: React.CSSProperties = { position: "absolute", left: 12, right: 12, bottom: 108, height: 48, background: "rgba(16,17,22,.94)", border: "1px solid #383944", borderRadius: 10, alignItems: "center", justifyContent: "space-between", padding: "0 12px", fontSize: 12, zIndex: 15 };
 const statusBar: React.CSSProperties = { position: "absolute", top: 8, left: 8, background: "#14151bcc", padding: "4px 8px", borderRadius: 6, fontSize: 11, zIndex: 15 };

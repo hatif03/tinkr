@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Icon, type IconName } from "@/components/ui/Icon";
+import { AuthSessionGuard } from "@/components/AuthSessionGuard";
 import { SignOutButton } from "@/components/SignOutButton";
 
 const links: { href: string; label: string; icon: IconName; exact?: boolean }[] = [
@@ -16,9 +17,10 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
   const pathname = usePathname();
   const search = useSearchParams();
   return <div className="tk-shell">
+    <AuthSessionGuard />
     <aside className="tk-sidebar">
       <Link href="/dashboard" className="tk-logo" aria-label="tinkr home">
-        <span className="tk-logo-mark"><img src="/brand/tinkr-logo.png" alt="" /></span><span>tinkr</span>
+        <span className="tk-logo-mark"><img src="/brand/tinkr-128.png" alt="" width={31} height={31} /></span><span>tinkr</span>
       </Link>
       <nav className="tk-nav" aria-label="Workspace">
         {links.map(link => {
@@ -29,6 +31,9 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
           </Link>;
         })}
       </nav>
+      <div className="tk-sidebar-compact-account" title={email || "Account"}>
+        <SignOutButton compact />
+      </div>
       <div className="tk-sidebar-foot">
         {email && <span className="tk-account" title={email}>{email}</span>}
         <SignOutButton />

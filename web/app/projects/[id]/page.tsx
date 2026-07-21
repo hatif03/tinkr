@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, getApiErrorMessage, isSessionError } from "@/lib/api";
 import { buildTinkrLaunchUrl, canLaunchInTinkr } from "@/lib/projects";
 import { AppShell } from "@/components/AppShell";
 import { SharePanel } from "@/components/SharePanel";
@@ -22,16 +22,18 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   try {
     ({ project, revisions, members, comments } = await apiFetch(`/api/projects/${id}`, session.access_token));
   } catch (error) {
-    if (error instanceof ApiError && error.status === 401) redirect("/login");
-    if (error instanceof ApiError && error.status === 404) notFound();
+    if (isSessionError(error)) redirect("/login?reason=session-expired");
+    if (error instanceof ApiError && (error.status === 403 || error.status === 404)) notFound();
     throw error;
   }
   let assets: unknown[] = [];
+  let assetLoadError: string | null = null;
   try {
     const assetData = await apiFetch(`/api/projects/${id}/assets`, session.access_token);
     assets = assetData.assets || [];
-  } catch {
-    assets = [];
+  } catch (error) {
+    if (isSessionError(error)) redirect("/login?reason=session-expired");
+    assetLoadError = getApiErrorMessage(error, "Some project assets could not load.");
   }
   const launchable = canLaunchInTinkr(project.source_url);
   const openUrl = launchable ? buildTinkrLaunchUrl(project.source_url, project.id) : null;
@@ -51,6 +53,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             <Link href={`/projects/${id}/present`} style={styles.secondary}>Present</Link>
           </div>
         </header>
+        {assetLoadError && <section style={{ ...styles.panel, marginBottom: 16, borderColor: "#7a5d36", color: "#ffbd63" }} role="status">
+          {assetLoadError} <Link href={`/projects/${id}`} style={{ marginLeft: 8 }}>Retry</Link>
+        </section>}
         <LivePresence projectId={id} />
         <div style={styles.grid}>
           <section style={styles.panel}>

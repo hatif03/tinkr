@@ -1,7 +1,7 @@
 import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { ApiError, apiFetch } from "@/lib/api";
+import { ApiError, apiFetch, isSessionError } from "@/lib/api";
 import { CanvasEditor } from "@/components/editor/CanvasEditor";
 
 export default async function ProjectEditPage({ params }: { params: Promise<{ id: string }> }) {
@@ -13,8 +13,8 @@ export default async function ProjectEditPage({ params }: { params: Promise<{ id
   let project: any;
   try { ({ project } = await apiFetch(`/api/projects/${id}`, session.access_token)); }
   catch (error) {
-    if (error instanceof ApiError && error.status === 401) redirect("/login");
-    if (error instanceof ApiError && error.status === 404) notFound();
+    if (isSessionError(error)) redirect("/login?reason=session-expired");
+    if (error instanceof ApiError && (error.status === 403 || error.status === 404)) notFound();
     throw error;
   }
 
