@@ -123,12 +123,15 @@ npm run dev
 # Dashboard (separate terminal)
 cd web
 Copy-Item .env.local.example .env.local
-# Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY
+# Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.
+# For a published build, also set NEXT_PUBLIC_TINKR_EXTENSION_ID to the
+# packaged extension ID. For an unpacked localhost build, leave it blank:
+# tinkr shows a one-click, explicit local-extension confirmation after sign-in.
 npm install
 npm run dev
 ```
 
-Apply [supabase/schema.sql](supabase/schema.sql), then the migrations in `supabase/migrations/`—including `20260721000000_fix_projects_rls_recursion.sql`—to the managed Supabase project before testing authenticated project access. Enable Google OAuth and email magic links with the local callback URL `http://localhost:3000/auth/callback`.
+Apply [supabase/schema.sql](supabase/schema.sql), then the migrations in `supabase/migrations/`—including `20260721000000_fix_projects_rls_recursion.sql`—to the managed Supabase project before testing authenticated project access. Enable the Email provider with both password and magic-link sign-in, and add `http://localhost:3000/auth/callback` as an allowed redirect URL.
 
 ## Project status
 
