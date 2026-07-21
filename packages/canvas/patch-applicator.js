@@ -22,7 +22,7 @@
 
   function applyPatch(patch, documentRef = document) {
     const el = resolvePatchTarget(patch, documentRef);
-    if (!el && patch.type !== "insert_html" && patch.type !== "insert_vector" && patch.type !== "update_proxy") return false;
+    if (!el && patch.type !== "insert_html" && patch.type !== "insert_vector" && patch.type !== "update_proxy" && patch.type !== "set_layer_order") return false;
     if (patch.type === "set_styles") {
       patch.breakpoint && patch.breakpoint !== "base"
         ? applyBreakpointStyle(el, patch.breakpoint, patch.styles, documentRef)
@@ -55,7 +55,20 @@
       else parent.append(el);
     }
     if (patch.type === "move_layer") Object.assign(el.style, patch.after?.styles || patch.styles || {});
-    if (patch.type === "set_layer_order") Object.assign(el.style, patch.after || {});
+    if (patch.type === "set_layer_order") {
+      if (Array.isArray(patch.layers)) {
+        let applied = false;
+        patch.layers.forEach(layer => {
+          const node = resolvePatchTarget(layer, documentRef);
+          if (!node) return;
+          Object.assign(node.style, layer.styles || {});
+          applied = true;
+        });
+        return applied;
+      }
+      if (!el) return false;
+      Object.assign(el.style, patch.after || {});
+    }
     if (patch.type === "create_proxy") {
       Object.assign(el.style, { opacity: "0", pointerEvents: "none" });
       el.setAttribute("data-tinkr-proxy-source", patch.proxy?.id || "true");

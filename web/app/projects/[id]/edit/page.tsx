@@ -1,15 +1,22 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
 import { CanvasEditor } from "@/components/editor/CanvasEditor";
 
 export default async function ProjectEditPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) redirect("/login");
-  const { project } = await apiFetch(`/api/projects/${id}`, session.access_token);
+  if (!user || !session) redirect("/login");
+  let project: any;
+  try { ({ project } = await apiFetch(`/api/projects/${id}`, session.access_token)); }
+  catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/login");
+    if (error instanceof ApiError && error.status === 404) notFound();
+    throw error;
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: "#101116" }}>

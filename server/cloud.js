@@ -15,10 +15,32 @@ const bearer = (request) => request.headers.authorization?.replace(/^Bearer\s+/i
 
 async function requireUser(req, res) {
   if (!configured()) { res.status(503).json({ error: "Supabase is not configured." }); return null; }
-  const client = publicClient(bearer(req));
-  const { data: { user }, error } = await client.auth.getUser();
+  const token = bearer(req);
+  if (!token) { res.status(401).json({ error: "Sign in is required." }); return null; }
+  const { data: { user }, error } = await publicClient().auth.getUser(token);
   if (error || !user) { res.status(401).json({ error: "Sign in is required." }); return null; }
-  return { client, user };
+  return { client: publicClient(token), db: serviceClient(), user, token };
+}
+
+async function canAccessProject(db, userId, projectId) {
+  const { data: project } = await db.from("projects").select("id, owner_id").eq("id", projectId).maybeSingle();
+  if (!project) return null;
+  if (project.owner_id === userId) return project;
+  const { data: member } = await db.from("project_members").select("project_id").eq("project_id", projectId).eq("user_id", userId).maybeSingle();
+  return member ? project : null;
+}
+
+async function listProjectsForUser(db, userId) {
+  const [{ data: owned, error: ownedError }, { data: memberships, error: memberError }] = await Promise.all([
+    db.from("projects").select("id,name,source_url,preview_path,updated_at,created_at,starred").eq("owner_id", userId).order("updated_at", { ascending: false }),
+    db.from("project_members").select("projects(id,name,source_url,preview_path,updated_at,created_at,starred)").eq("user_id", userId)
+  ]);
+  if (ownedError) throw ownedError;
+  if (memberError) throw memberError;
+  const shared = (memberships || []).map(m => m.projects).filter(Boolean);
+  const byId = new Map();
+  [...(owned || []), ...shared].forEach(p => byId.set(p.id, p));
+  return [...byId.values()].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
 }
 
 function draftPayload(body) {
@@ -67,9 +89,12 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data, error } = await auth.client.from("projects").select("id,name,source_url,preview_path,updated_at,created_at,starred").order("updated_at", { ascending: false });
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ projects: data });
+    try {
+      const projects = await listProjectsForUser(auth.db, auth.user.id);
+      res.json({ projects });
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
   });
 
   app.post("/api/projects", async (req, res) => {
@@ -84,7 +109,7 @@ export function mountCloudRoutes(app) {
       current_draft: draft,
       canvas_meta: req.body?.canvas_meta || { sections: draft.sections || [], viewportState: { scale: 1, x: 0, y: 0 } }
     };
-    const { data, error } = await auth.client.from("projects").insert(project).select().single();
+    const { data, error } = await auth.db.from("projects").insert(project).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.status(201).json({ project: data });
   });
@@ -92,12 +117,14 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data: project, error } = await auth.client.from("projects").select("*").eq("id", req.params.projectId).single();
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data: project, error } = await auth.db.from("projects").select("*").eq("id", req.params.projectId).single();
     if (error || !project) return res.status(404).json({ error: "Project not found." });
     const [{ data: revisions }, { data: members }, { data: comments }] = await Promise.all([
-      auth.client.from("revisions").select("id,name,description,created_at,preview_path").eq("project_id", project.id).order("created_at", { ascending: false }),
-      auth.client.from("project_members").select("user_id,role,created_at").eq("project_id", project.id),
-      auth.client.from("comments").select("id,body,target_anchor,created_at,resolved_at,author_id").eq("project_id", project.id).order("created_at", { ascending: false })
+      auth.db.from("revisions").select("id,name,description,created_at,preview_path").eq("project_id", project.id).order("created_at", { ascending: false }),
+      auth.db.from("project_members").select("user_id,role,created_at").eq("project_id", project.id),
+      auth.db.from("comments").select("id,body,target_anchor,created_at,resolved_at,author_id").eq("project_id", project.id).order("created_at", { ascending: false })
     ]);
     res.json({ project, revisions: revisions || [], members: members || [], comments: comments || [] });
   });
@@ -105,13 +132,15 @@ export function mountCloudRoutes(app) {
   app.patch("/api/projects/:projectId", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const patch = { updated_at: new Date().toISOString() };
     if (req.body?.name) patch.name = String(req.body.name).slice(0, 120);
     if (req.body?.current_draft !== undefined || req.body?.patches !== undefined || req.body?.draft !== undefined) patch.current_draft = draftPayload(req.body);
     if (req.body?.canvas_meta !== undefined) patch.canvas_meta = req.body.canvas_meta;
     if (req.body?.preview_path) patch.preview_path = req.body.preview_path;
     if (req.body?.starred !== undefined) patch.starred = Boolean(req.body.starred);
-    const { data, error } = await auth.client.from("projects").update(patch).eq("id", req.params.projectId).select().single();
+    const { data, error } = await auth.db.from("projects").update(patch).eq("id", req.params.projectId).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ project: data });
   });
@@ -119,7 +148,9 @@ export function mountCloudRoutes(app) {
   app.patch("/api/projects/:projectId/star", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data, error } = await auth.client.from("projects").update({ starred: Boolean(req.body?.starred), updated_at: new Date().toISOString() }).eq("id", req.params.projectId).select("id,starred").single();
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data, error } = await auth.db.from("projects").update({ starred: Boolean(req.body?.starred), updated_at: new Date().toISOString() }).eq("id", req.params.projectId).select("id,starred").single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ project: data });
   });
@@ -127,8 +158,10 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/dev-spec", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const selector = String(req.query.selector || "");
-    const { data: project, error } = await auth.client.from("projects").select("current_draft").eq("id", req.params.projectId).single();
+    const { data: project, error } = await auth.db.from("projects").select("current_draft").eq("id", req.params.projectId).single();
     if (error || !project) return res.status(404).json({ error: "Project not found." });
     const patches = project.current_draft?.patches || [];
     const match = patches.filter(p => p.selector === selector || p.target?.selector === selector);
@@ -138,7 +171,9 @@ export function mountCloudRoutes(app) {
   app.delete("/api/projects/:projectId", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { error } = await auth.client.from("projects").delete().eq("id", req.params.projectId);
+    const { data: project } = await auth.db.from("projects").select("owner_id").eq("id", req.params.projectId).maybeSingle();
+    if (!project || project.owner_id !== auth.user.id) return res.status(404).json({ error: "Project not found." });
+    const { error } = await auth.db.from("projects").delete().eq("id", req.params.projectId);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
   });
@@ -146,7 +181,9 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/revisions", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data, error } = await auth.client.from("revisions").select("*").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data, error } = await auth.db.from("revisions").select("*").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ revisions: data });
   });
@@ -154,6 +191,8 @@ export function mountCloudRoutes(app) {
   app.post("/api/projects/:projectId/revisions", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const draft = draftPayload(req.body);
     const row = {
       project_id: req.params.projectId,
@@ -165,7 +204,7 @@ export function mountCloudRoutes(app) {
       draft_snapshot: req.body?.draft_snapshot || draft,
       preview_path: req.body?.previewPath || null
     };
-    const { data, error } = await auth.client.from("revisions").insert(row).select().single();
+    const { data, error } = await auth.db.from("revisions").insert(row).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.status(201).json({ revision: data });
   });
@@ -173,7 +212,9 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/comments", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data, error } = await auth.client.from("comments").select("*").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data, error } = await auth.db.from("comments").select("*").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ comments: data });
   });
@@ -181,6 +222,8 @@ export function mountCloudRoutes(app) {
   app.post("/api/projects/:projectId/comments", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const row = {
       project_id: req.params.projectId,
       revision_id: req.body?.revisionId || null,
@@ -189,7 +232,7 @@ export function mountCloudRoutes(app) {
       body: String(req.body?.body || "").trim()
     };
     if (!row.body) return res.status(400).json({ error: "body is required" });
-    const { data, error } = await auth.client.from("comments").insert(row).select().single();
+    const { data, error } = await auth.db.from("comments").insert(row).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.status(201).json({ comment: data });
   });
@@ -197,11 +240,13 @@ export function mountCloudRoutes(app) {
   app.patch("/api/projects/:projectId/comments/:commentId", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const patch = {};
     if (req.body?.resolved === true) patch.resolved_at = new Date().toISOString();
     if (req.body?.resolved === false) patch.resolved_at = null;
     if (req.body?.body) patch.body = String(req.body.body).trim();
-    const { data, error } = await auth.client.from("comments").update(patch).eq("id", req.params.commentId).select().single();
+    const { data, error } = await auth.db.from("comments").update(patch).eq("id", req.params.commentId).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ comment: data });
   });
@@ -209,6 +254,8 @@ export function mountCloudRoutes(app) {
   app.post("/api/projects/:projectId/members", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const { data: project } = await auth.db.from("projects").select("owner_id").eq("id", req.params.projectId).maybeSingle();
+    if (!project || project.owner_id !== auth.user.id) return res.status(404).json({ error: "Project not found." });
     const email = String(req.body?.email || "").trim();
     const role = req.body?.role || "viewer";
     if (!email) return res.status(400).json({ error: "email is required" });
@@ -218,7 +265,7 @@ export function mountCloudRoutes(app) {
       userId = listed?.data?.users?.find(u => u.email === email)?.id;
     }
     if (!userId) return res.status(404).json({ error: "User not found. They must sign up first." });
-    const { data, error } = await auth.client.from("project_members").upsert({ project_id: req.params.projectId, user_id: userId, role }).select().single();
+    const { data, error } = await auth.db.from("project_members").upsert({ project_id: req.params.projectId, user_id: userId, role }).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.status(201).json({ member: data });
   });
@@ -226,7 +273,9 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/assets", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data, error } = await auth.client.from("assets").select("id,storage_path,mime_type,byte_size,created_at").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data, error } = await auth.db.from("assets").select("id,storage_path,mime_type,byte_size,created_at").eq("project_id", req.params.projectId).order("created_at", { ascending: false });
     if (error) return res.status(400).json({ error: error.message });
     res.json({ assets: data || [] });
   });
@@ -234,9 +283,11 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/assets/:assetId/url", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data: asset, error } = await auth.client.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data: asset, error } = await auth.db.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
     if (error || !asset) return res.status(404).json({ error: "Asset not found." });
-    const { data, error: urlError } = await auth.client.storage.from("tinkr-assets").createSignedUrl(asset.storage_path, 3600);
+    const { data, error: urlError } = await auth.db.storage.from("tinkr-assets").createSignedUrl(asset.storage_path, 3600);
     if (urlError) return res.status(400).json({ error: urlError.message });
     res.json({ url: data.signedUrl });
   });
@@ -244,9 +295,11 @@ export function mountCloudRoutes(app) {
   app.delete("/api/projects/:projectId/assets/:assetId", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
-    const { data: asset } = await auth.client.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
-    if (asset?.storage_path) await auth.client.storage.from("tinkr-assets").remove([asset.storage_path]);
-    const { error } = await auth.client.from("assets").delete().eq("id", req.params.assetId);
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    const { data: asset } = await auth.db.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
+    if (asset?.storage_path) await auth.db.storage.from("tinkr-assets").remove([asset.storage_path]);
+    const { error } = await auth.db.from("assets").delete().eq("id", req.params.assetId);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
   });
@@ -254,20 +307,24 @@ export function mountCloudRoutes(app) {
   app.post("/api/projects/:projectId/assets/upload-url", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const mime = String(req.body?.mimeType || "image/png");
     const path = `${auth.user.id}/${req.params.projectId}/${crypto.randomUUID()}`;
-    const { data, error } = await auth.client.storage.from("tinkr-assets").createSignedUploadUrl(path);
+    const { data, error } = await auth.db.storage.from("tinkr-assets").createSignedUploadUrl(path);
     if (error) return res.status(400).json({ error: error.message });
-    await auth.client.from("assets").insert({ project_id: req.params.projectId, uploader_id: auth.user.id, storage_path: path, mime_type: mime, byte_size: Number(req.body?.byteSize || 0) });
+    await auth.db.from("assets").insert({ project_id: req.params.projectId, uploader_id: auth.user.id, storage_path: path, mime_type: mime, byte_size: Number(req.body?.byteSize || 0) });
     res.json({ uploadUrl: data.signedUrl, path, token: data.token });
   });
 
   app.post("/api/projects/:projectId/share", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     const token = crypto.randomBytes(32).toString("base64url");
     const row = { project_id: req.params.projectId, revision_id: req.body?.revisionId, created_by: auth.user.id, token_hash: tokenHash(token), expires_at: req.body?.expiresAt || null };
-    const { error } = await auth.client.from("share_links").insert(row);
+    const { error } = await auth.db.from("share_links").insert(row);
     if (error) return res.status(400).json({ error: error.message });
     const base = process.env.PUBLIC_APP_URL || "http://localhost:3000";
     res.status(201).json({ url: `${base}/review/${token}` });

@@ -93,6 +93,15 @@ async function deactivateTab(tabId, flush = true) {
   if (designTabId === tabId) setDesignTabId(null);
 }
 
+async function notifyAuthChanged() {
+  if (!designTabId) return;
+  try {
+    await chrome.tabs.sendMessage(designTabId, { type: "TINKR_AUTH_CHANGED" });
+  } catch {
+    /* tab may not have content script */
+  }
+}
+
 chrome.runtime.onConnect.addListener(port => {
   if (port.name !== "tinkr-panel") return;
   panelPort = port;
@@ -122,7 +131,14 @@ function startPresenceLoop(projectId) {
 
 chrome.runtime.onMessageExternal.addListener((message, _sender, sendResponse) => {
   if (message?.type === "TINKR_AUTH" && message.session) {
-    setSession(message.session).then(() => sendResponse({ ok: true }));
+    (async () => {
+      await setSession(message.session);
+      if (message.supabaseUrl && message.anonKey) {
+        await chrome.storage.local.set({ tinkrSupabase: { supabaseUrl: message.supabaseUrl, anonKey: message.anonKey } });
+      }
+      await notifyAuthChanged();
+      sendResponse({ ok: true });
+    })();
     return true;
   }
   return false;
@@ -147,6 +163,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         await setSession(null);
         activeProjectId = null;
         if (presenceTimer) clearInterval(presenceTimer);
+        await notifyAuthChanged();
         sendResponse({ ok: true });
         return;
       }

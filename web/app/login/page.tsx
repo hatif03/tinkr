@@ -36,7 +36,7 @@ export default function LoginPage() {
   return (
     <main style={styles.page}>
       <div style={styles.card}>
-        <div style={styles.brand}><span style={styles.logo}>✦</span><div><strong style={{ fontSize: 22 }}>Tinkr Cloud</strong><div style={styles.muted}>Save remixes, share reviews, collaborate live</div></div></div>
+        <div style={styles.brand}><img src="/brand/tinkr-logo.png" alt="tinkr" style={styles.logo} /><div><strong style={{ fontSize: 22 }}>tinkr</strong><div style={styles.muted}>Save remixes, share reviews, collaborate live</div></div></div>
         <p style={styles.muted}>{status}</p>
         <button style={styles.primary} disabled={busy} onClick={signInGoogle}>Continue with Google</button>
         <form onSubmit={sendMagicLink} style={{ marginTop: 16 }}>
@@ -53,7 +53,7 @@ const styles: Record<string, React.CSSProperties> = {
   page: { minHeight: "100vh", display: "grid", placeItems: "center", padding: 24 },
   card: { width: "100%", maxWidth: 420, background: "#14151b", border: "1px solid #30313a", borderRadius: 16, padding: 28 },
   brand: { display: "flex", gap: 12, alignItems: "center", marginBottom: 20 },
-  logo: { width: 40, height: 40, display: "grid", placeItems: "center", borderRadius: 12, background: "linear-gradient(135deg,#d0ff5b,#74e7ff)", color: "#101116", fontSize: 22 },
+  logo: { width: 40, height: 40, borderRadius: 12 },
   muted: { color: "#9d9da7" },
   label: { display: "block", color: "#bfc0c8", fontSize: 12, marginBottom: 12 },
   input: { width: "100%", marginTop: 6, padding: 10, borderRadius: 8, border: "1px solid #3b3c46", background: "#191a20", color: "#fff" },

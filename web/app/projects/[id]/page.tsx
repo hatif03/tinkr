@@ -1,7 +1,8 @@
-import { redirect } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import { apiFetch } from "@/lib/api";
+import { ApiError, apiFetch } from "@/lib/api";
+import { buildTinkrLaunchUrl, canLaunchInTinkr } from "@/lib/projects";
 import { AppShell } from "@/components/AppShell";
 import { SharePanel } from "@/components/SharePanel";
 import { CommentsPanel } from "@/components/CommentsPanel";
@@ -14,9 +15,17 @@ import { InviteMember } from "@/components/InviteMember";
 export default async function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session) redirect("/login");
-  const { project, revisions, members, comments } = await apiFetch(`/api/projects/${id}`, session.access_token);
+  if (!user || !session) redirect("/login");
+  let project: any, revisions: any[], members: any[], comments: any[];
+  try {
+    ({ project, revisions, members, comments } = await apiFetch(`/api/projects/${id}`, session.access_token));
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) redirect("/login");
+    if (error instanceof ApiError && error.status === 404) notFound();
+    throw error;
+  }
   let assets: unknown[] = [];
   try {
     const assetData = await apiFetch(`/api/projects/${id}/assets`, session.access_token);
@@ -24,7 +33,8 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
   } catch {
     assets = [];
   }
-  const openUrl = `${project.source_url}${project.source_url.includes("?") ? "&" : "?"}tinkr_project=${project.id}`;
+  const launchable = canLaunchInTinkr(project.source_url);
+  const openUrl = launchable ? buildTinkrLaunchUrl(project.source_url, project.id) : null;
 
   return (
     <AppShell email={session.user.email}>
@@ -36,9 +46,9 @@ export default async function ProjectPage({ params }: { params: Promise<{ id: st
             <a href={project.source_url} style={styles.muted}>{project.source_url}</a>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <Link href={`/projects/${id}/edit`} style={styles.primary}>Open in Editor</Link>
+            {openUrl ? <a href={openUrl} style={styles.primary}>Open in tinkr</a> : <Link href={`/projects/${id}/edit`} style={styles.primary}>Open webboard</Link>}
+            <Link href={`/projects/${id}/edit`} style={styles.secondary}>Open webboard</Link>
             <Link href={`/projects/${id}/present`} style={styles.secondary}>Present</Link>
-            <a href={openUrl} style={styles.secondary}>Open in extension</a>
           </div>
         </header>
         <LivePresence projectId={id} />

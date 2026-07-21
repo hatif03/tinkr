@@ -92,7 +92,7 @@ async function refreshPanelState() {
     return;
   }
 
-  resetPanelUi(s ? "Design Mode is off on this page — enter again to resume editing." : "Reload the page if Tinkr tools don't appear.");
+  resetPanelUi(s ? "Design Mode is off on this page — enter again to resume editing." : "Reload the page if tinkr tools don't appear.");
 }
 
 function setModeUi(active) {
@@ -137,10 +137,13 @@ function renderFromState(s) {
     toolActive.textContent = s.activeToolLabel;
     toolActive.classList.remove("tinkr-hide");
   } else toolActive.classList.add("tinkr-hide");
-  const syncing = /saving|sync/i.test(s.status || "");
-  const warning = /failed|offline|reattach|attention/i.test(s.status || "");
-  saveState.textContent = warning ? "Needs attention" : syncing ? "Saving" : s.signedIn ? "Saved" : "Local";
-  saveState.className = `save-state ${warning ? "warning" : syncing ? "saving" : s.signedIn ? "saved" : ""}`;
+  const st = s.status || "";
+  const cloudSynced = /synced to tinkr cloud|created cloud project and synced/i.test(st);
+  const syncing = /saving draft|saved locally|saving/i.test(st) && !cloudSynced;
+  const warning = /failed|offline|reattach|attention|local only/i.test(st);
+  const saveLabel = warning ? "Needs attention" : syncing ? "Saving" : cloudSynced ? "Saved" : s.signedIn ? "Signed in" : "Local";
+  saveState.textContent = saveLabel;
+  saveState.className = `save-state ${warning ? "warning" : syncing ? "saving" : cloudSynced ? "saved" : ""}`;
   if (s.pinCommentMode) statusEl.innerHTML = '<span class="pin-mode">Click the page to pin a comment</span>';
 
   const uiMode = s.tool?.devMode ? "dev" : s.tool?.protoMode ? "proto" : "design";
@@ -166,9 +169,11 @@ function renderFromState(s) {
   const ctx = $("context");
   if (s.selection) {
     const sel = s.selection;
+    const pickHint = s.layerPick ? `<p class="arrange-pick-hint">Click a layer on the page to place ${s.layerPick}.</p>` : "";
     ctx.innerHTML = `<h4>${sel.type} · parent ${sel.parentDisplay}</h4>
+      ${pickHint}
       <div class="arrange-title">Arrange · ${s.moveMode === "structural" ? "source layout" : "visual canvas"}</div>
-      <div class="arrange-grid"><button data-context="move-visual" class="${s.moveMode !== "structural" ? "active" : ""}">Free move</button><button data-context="move-structural" class="${s.moveMode === "structural" ? "active" : ""}">Reorder layout</button><button data-context="front">Front</button><button data-context="forward">Forward</button><button data-context="backward">Backward</button><button data-context="back">Back</button><button data-context="above">Place above</button><button data-context="below">Place below</button></div>
+      <div class="arrange-grid"><button data-context="move-visual" class="${s.moveMode !== "structural" ? "active" : ""}">Free move</button><button data-context="move-structural" class="${s.moveMode === "structural" ? "active" : ""}">Reorder layout</button><button data-context="front">Front</button><button data-context="forward">Forward</button><button data-context="backward">Backward</button><button data-context="back">Back</button><button data-context="above" class="${s.layerPick === "above" ? "active" : ""}">Place above</button><button data-context="below" class="${s.layerPick === "below" ? "active" : ""}">Place below</button></div>
       ${!sel.proxy ? '<button data-context="visual-copy">Create visual copy</button>' : ""}
       ${sel.context.text ? '<button data-context="edit">Edit text</button><button data-context="upper">Uppercase</button>' : ""}
       ${sel.context.image ? '<button data-context="cover">Cover</button><button data-context="contain">Contain</button><button data-context="alt">Set alt</button>' : ""}
@@ -199,6 +204,7 @@ function renderFromState(s) {
   const visualItems = (s.visualLayers || []).map(v => `<li class="canvas-item"><span>Visual copy · z ${v.zIndex}</span><button data-proxy="${v.id}">Select</button></li>`).join("");
   $("layers").innerHTML = visualItems + vectorItems || "<li>No canvas layers yet</li>";
   $("layers").querySelectorAll("[data-proxy]").forEach(b => b.onclick = () => send("selectProxy", { id: b.dataset.proxy }));
+  $("layers").querySelectorAll("[data-vector]").forEach(b => b.onclick = () => send("selectVector", { id: b.dataset.vector }));
 
   $("assets-list").innerHTML = (s.assets || []).map(a => `<li class="canvas-item"><span title="${a.name}">${a.name}</span><button data-asset-insert="${a.id}">Insert</button></li>`).join("") || "<li>No uploaded assets</li>";
   $("components-list").innerHTML = (s.components || []).map(c => `<li class="canvas-item"><span>${c.name}</span><button data-component-insert="${c.id}">Insert</button></li>`).join("") || "<li>No saved components</li>";
@@ -247,19 +253,19 @@ function renderFromState(s) {
 async function refreshAuth() {
   const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
   if (auth?.signedIn) {
-    account.textContent = `Signed in as ${auth.user?.email || auth.user?.name || "Tinkr creator"}`;
+    account.textContent = `Signed in as ${auth.user?.email || auth.user?.name || "tinkr creator"}`;
     signin.textContent = "Manage account";
     signin.classList.remove("tinkr-hide");
     dashboard.classList.remove("tinkr-hide");
     signout.classList.remove("tinkr-hide");
-    footnote.textContent = "Changes autosync to your Tinkr library when Design Mode is active.";
+    footnote.textContent = "Changes autosync to your tinkr library when Design Mode is active.";
   } else {
     account.textContent = "Guest mode — local edits only.";
     signin.textContent = "Sign in to save & collaborate";
     signin.classList.remove("tinkr-hide");
     dashboard.classList.add("tinkr-hide");
     signout.classList.add("tinkr-hide");
-    footnote.textContent = "Local edits stay on this device until you sign in and sync to Tinkr Cloud.";
+    footnote.textContent = "Local edits stay on this device until you sign in and sync to tinkr.";
   }
 }
 
@@ -291,7 +297,10 @@ refreshPanelState();
 loadLocalFonts();
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.tinkrSession || changes.tinkrUser)) refreshAuth();
+  if (area === "local" && (changes.tinkrSession || changes.tinkrUser)) {
+    refreshAuth();
+    refreshPanelState();
+  }
 });
 
 chrome.runtime.onMessage.addListener(msg => {

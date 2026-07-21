@@ -17,8 +17,8 @@ export function AppShell({ children, email }: { children: React.ReactNode; email
   const search = useSearchParams();
   return <div className="tk-shell">
     <aside className="tk-sidebar">
-      <Link href="/dashboard" className="tk-logo" aria-label="Tinkr home">
-        <span className="tk-logo-mark"><Icon name="sparkle" size={18}/></span><span>tinkr</span>
+      <Link href="/dashboard" className="tk-logo" aria-label="tinkr home">
+        <span className="tk-logo-mark"><img src="/brand/tinkr-logo.png" alt="" /></span><span>tinkr</span>
       </Link>
       <nav className="tk-nav" aria-label="Workspace">
         {links.map(link => {

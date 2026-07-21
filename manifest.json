@@ -1,6 +1,6 @@
 {
   "manifest_version": 3,
-  "name": "Tinkr",
+  "name": "tinkr",
   "version": "0.3.0",
   "description": "Remix live webpages without changing the original site.",
   "permissions": ["storage", "activeTab", "identity", "tabs", "sidePanel", "scripting", "downloads"],
@@ -13,7 +13,13 @@
   "externally_connectable": {
     "matches": ["http://localhost:3000/*", "https://app.tinkr.com/*"]
   },
-  "action": { "default_title": "Open Tinkr" },
+  "action": { "default_title": "Open tinkr" },
+  "icons": {
+    "16": "assets/brand/tinkr-16.png",
+    "32": "assets/brand/tinkr-32.png",
+    "48": "assets/brand/tinkr-48.png",
+    "128": "assets/brand/tinkr-128.png"
+  },
   "side_panel": { "default_path": "sidepanel.html" },
   "background": { "service_worker": "background.js" },
   "content_scripts": [{

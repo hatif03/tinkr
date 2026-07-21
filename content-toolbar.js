@@ -32,7 +32,13 @@
     const toolbar = root.querySelector("#tinkr-toolbar");
     const vectorBar = root.querySelector("#tinkr-vector-toolbar");
     const closeMenus = () => toolbar.querySelectorAll(".tinkr-tool-menu").forEach(m => m.classList.add("tinkr-hide"));
-    const onDocClick = () => closeMenus();
+    const onDocPointer = (e) => {
+      if (toolbar.contains(e.target) || vectorBar?.contains(e.target)) return;
+      closeMenus();
+    };
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") closeMenus();
+    };
     toolbar.querySelectorAll("[data-tool-trigger]").forEach(btn => btn.addEventListener("click", e => {
       e.stopPropagation();
       const menu = toolbar.querySelector(`[data-menu="${btn.dataset.toolTrigger}"]`);
@@ -51,12 +57,20 @@
     toolbar.querySelector("[data-tool-action='delete']")?.addEventListener("click", () => handlers.deleteSelected?.());
     toolbar.querySelector("[data-tool-action='comment']")?.addEventListener("click", () => handlers.setTool("comment", "pin"));
     toolbar.querySelector("[data-tool-action='devmode']")?.addEventListener("click", () => handlers.toggleDevMode());
-    toolbar.querySelector("[data-tool-action='timeline']")?.addEventListener("click", () => handlers.toggleTimeline());
+    toolbar.querySelector("[data-tool-action='timeline']")?.addEventListener("click", () => { handlers.toggleTimeline(); closeMenus(); });
     toolbar.querySelector("[data-tool-action='present']")?.addEventListener("click", () => handlers.enterPresent());
     toolbar.querySelector("[data-tool-action='resources']")?.addEventListener("click", () => handlers.openResources());
     vectorBar?.querySelectorAll("[data-vector-edit]").forEach(btn => btn.addEventListener("click", () => handlers.vectorEdit?.(btn.dataset.vectorEdit)));
-    document.addEventListener("click", onDocClick);
-    return { toolbar, cleanup: () => document.removeEventListener("click", onDocClick) };
+    document.addEventListener("mousedown", onDocPointer, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return {
+      toolbar,
+      closeMenus,
+      cleanup: () => {
+        document.removeEventListener("mousedown", onDocPointer, true);
+        document.removeEventListener("keydown", onKeyDown, true);
+      }
+    };
   }
 
   function syncToolbar(root, tool) {

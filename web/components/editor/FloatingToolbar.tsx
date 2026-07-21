@@ -71,7 +71,7 @@ export function FloatingToolbar({ active, devMode, timelineOpen, onTool, onDevMo
 
   return (
     <>
-      <div className="editor-toolbar" role="toolbar" aria-label="Tinkr editor tools">
+      <div className="editor-toolbar" role="toolbar" aria-label="tinkr editor tools">
         {Object.keys(TOOL_GROUPS).map(g => (
           <ToolDropdown key={g} groupKey={g} active={active} devMode={devMode} onTool={onTool} />
         ))}

@@ -1,0 +1,6 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs><linearGradient id="tinkr-gradient" x1="35" y1="30" x2="221" y2="220" gradientUnits="userSpaceOnUse"><stop stop-color="#D4FF6A"/><stop offset="1" stop-color="#74E8FF"/></linearGradient></defs>
+  <rect width="256" height="256" rx="64" fill="#101116"/>
+  <path d="M67 40C40 42 29 67 38 90C46 110 67 118 63 141C59 164 37 178 50 201C62 222 91 226 112 215C133 204 132 178 151 166C169 155 195 167 214 151C236 132 232 98 210 83C191 70 168 79 151 63C131 43 95 37 67 40Z" fill="url(#tinkr-gradient)"/>
+  <path d="M142 82L153 108L180 119L154 131L142 158L130 132L103 120L129 108L142 82Z" fill="#101116"/>
+</svg>

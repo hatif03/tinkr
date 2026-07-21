@@ -8,6 +8,8 @@ server/node_modules/
 .env.local
 server/.env
 web/.env.local
+.demo-chrome-profile/
+scripts/node_modules/
 
 # Build outputs
 web/.next/

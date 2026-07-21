@@ -1,5 +1,7 @@
 "use client";
 
+import { buildTinkrImportUrl } from "@/lib/projects";
+
 type Revision = {
   id: string;
   name?: string;
@@ -12,7 +14,7 @@ type Revision = {
 
 export function ReviewClient({ revision, token }: { revision: Revision; token: string }) {
   const project = revision.projects;
-  const importUrl = project ? `${project.source_url}${project.source_url.includes("?") ? "&" : "?"}tinkr_import=${token}` : "";
+  const importUrl = project ? buildTinkrImportUrl(project.source_url, token) : "";
 
   return (
     <main style={{ maxWidth: 900, margin: "0 auto", padding: "32px 24px" }}>
@@ -27,7 +29,7 @@ export function ReviewClient({ revision, token }: { revision: Revision; token: s
       </section>
       {importUrl && (
         <p style={{ marginTop: 20 }}>
-          <a href={importUrl} style={{ color: "#b8ff37", fontWeight: 700 }}>Open source page and import in Tinkr extension →</a>
+          <a href={importUrl} style={{ color: "#b8ff37", fontWeight: 700 }}>Open source page and import in tinkr →</a>
         </p>
       )}
       <p style={{ color: "#9d9da7", fontSize: 13 }}>Visual review only — replaying edits happens in the extension on the original URL.</p>

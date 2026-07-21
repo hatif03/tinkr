@@ -33,7 +33,7 @@
     strokeSession: null, vectorEditMode: "move", timelineOpen: false, presentMode: false,
     toolbarCleanup: null, spaceHand: false, toolBeforeSpace: null, onPageHide: null, suppressClick: false,
     moveMode: "visual", activePointerId: null,
-    skipPersist: false
+    skipPersist: false, layerPick: null
   };
 
   function toolStatusLabel() {
@@ -321,7 +321,7 @@
     } else if (selectedProxy()) {
       const layer = selectedProxy();
       selection = {
-        tag: "tinkr-proxy", type: "Visual copy", parentDisplay: "Tinkr canvas", crumbs: [],
+        tag: "tinkr-proxy", type: "Visual copy", parentDisplay: "tinkr canvas", crumbs: [],
         styles: { backgroundColor: "#000000", color: "#ffffff", fontSize: 0, padding: 0, borderRadius: 0, opacity: 1, fontWeight: "", lineHeight: "", letterSpacing: "", textAlign: "", textTransform: "", objectFit: "", objectPosition: "", filter: "", gap: "" },
         context: { text: false, image: false }, proxy: true, zIndex: layer.zIndex
       };
@@ -336,13 +336,35 @@
       devOutput: state.tool.devMode ? getDevOutput() : null,
       devSpec: state.tool.devMode ? getDevSpec() : null,
       a11ySnapshot: state.selected ? getA11ySnapshot(state.selected) : null,
-      timelineOpen: state.timelineOpen, viewport: state.viewport, moveMode: state.moveMode,
+      timelineOpen: state.timelineOpen, viewport: state.viewport, moveMode: state.moveMode, layerPick: state.layerPick,
       canUndo: state.history.length > 0, canRedo: state.future.length > 0, editCount: state.history.length
     };
   }
 
+  function layoutChrome() {
+    const root = state.root;
+    if (!root) return;
+    const timelineOpen = state.timelineOpen && !root.querySelector("#tinkr-timeline")?.classList.contains("tinkr-hide");
+    const vectorVisible = Boolean(state.selectedVectorId) && !root.querySelector("#tinkr-vector-toolbar")?.classList.contains("tinkr-hide");
+    if (timelineOpen) {
+      root.style.setProperty("--tk-toolbar-bottom", "152px");
+      root.style.setProperty("--tk-vector-bottom", vectorVisible ? "200px" : "152px");
+      root.style.setProperty("--tk-timeline-bottom", "72px");
+    } else {
+      root.style.setProperty("--tk-toolbar-bottom", "24px");
+      root.style.setProperty("--tk-vector-bottom", "72px");
+      root.style.setProperty("--tk-timeline-bottom", "72px");
+    }
+  }
+
+  function clearLayerPick() {
+    state.layerPick = null;
+    state.root?.querySelector("#tinkr-layer-target")?.classList.add("tinkr-hide");
+  }
+
   function pushPanelState() {
     window.TinkrToolbar?.syncToolbar(state.root, { ...state.tool, timelineOpen: state.timelineOpen });
+    layoutChrome();
     chrome.runtime.sendMessage({ type: "TINKR_PANEL_UPDATE", state: getPanelState() }).catch(() => {});
   }
 
@@ -385,6 +407,7 @@
 
   function select(el) {
     if (!el || SKIP.has(el.tagName) || isTinkr(el)) return;
+    if (state.layerPick) clearLayerPick();
     state.selectedProxyId = null;
     if (state.tool.devMode) { state.selected = el; placeBox("#tinkr-selected", el); renderDevOverlay(); status(`Inspecting ${el.tagName.toLowerCase()}.`); pushPanelState(); return; }
     state.selected = el; placeBox("#tinkr-selected", el); status(`Selected ${el.tagName.toLowerCase()}.`);
@@ -393,12 +416,14 @@
 
   function selectProxy(id) {
     const layer = state.visualLayers.find(item => item.id === id); if (!layer) return;
+    if (state.layerPick) clearLayerPick();
     state.selected = null; state.selectedVectorId = null; state.selectedProxyId = id;
     placeBox("#tinkr-hover"); renderVisualLayers(); placeProxyBox("#tinkr-selected", layer);
     status(`Selected visual copy · z ${layer.zIndex}.`); pushPanelState();
   }
 
   function selectVector(id) {
+    if (state.layerPick) clearLayerPick();
     state.selectedVectorId = id;
     state.selected = null; state.selectedProxyId = null;
     placeBox("#tinkr-selected");
@@ -656,43 +681,108 @@
     box.classList.remove("tinkr-hide");
   }
 
-  function arrangeElement(el, direction, target = null) {
-    if (!el) return status("Select a layer first.");
-    const before = snapshot(el);
-    const siblings = [...(el.parentElement?.children || [])].filter(node => node.nodeType === 1 && !isTinkr(node));
-    const zValues = siblings.map(node => Number(getComputedStyle(node).zIndex)).filter(Number.isFinite);
-    const current = Number(getComputedStyle(el).zIndex);
-    if (getComputedStyle(el).position === "static") el.style.position = "relative";
-    let z = Number.isFinite(current) ? current : 0;
-    if (target) z = (Number(getComputedStyle(target).zIndex) || 0) + (direction === "below" ? -1 : 1);
-    else if (direction === "front") z = Math.max(0, ...zValues) + 1;
-    else if (direction === "back") z = Math.min(0, ...zValues) - 1;
-    else if (direction === "forward") z += 1;
-    else if (direction === "backward") z -= 1;
-    el.style.zIndex = String(z);
-    push({ type: "set_layer_order", selector: selectorFor(el), target: fingerprint(el), before: { style: before.style }, after: { position: el.style.position, zIndex: el.style.zIndex } }, () => restore(el, before));
-    status(`Layer moved ${direction === "front" ? "to front" : direction === "back" ? "to back" : direction}.`);
+  function stackSiblings(el) {
+    return [...(el.parentElement?.children || [])].filter(node => node.nodeType === 1 && !isTinkr(node) && !node.classList.contains("tinkr-hidden"));
   }
 
-  function arrangeProxy(layer, direction) {
-    if (!layer) return status("Select a visual copy first.");
-    const before = { ...layer };
-    const zs = state.visualLayers.map(item => Number(item.zIndex) || 0);
-    if (direction === "front") layer.zIndex = Math.max(0, ...zs) + 1;
-    else if (direction === "back") layer.zIndex = Math.min(0, ...zs) - 1;
-    else if (direction === "forward") layer.zIndex += 1;
-    else if (direction === "backward") layer.zIndex -= 1;
+  function canShareStackGroup(a, b) {
+    return Boolean(a && b && a.parentElement === b.parentElement && !a.closest("iframe") && !b.closest("iframe"));
+  }
+
+  function commitDomOrder(order, selected, message) {
+    const before = order.map(el => ({ el, style: el.getAttribute("style") }));
+    const layers = order.map((el, index) => {
+      if (getComputedStyle(el).position === "static") el.style.position = "relative";
+      el.style.zIndex = String(100 + index);
+      return { selector: selectorFor(el), target: fingerprint(el), styles: { position: el.style.position, zIndex: el.style.zIndex } };
+    });
+    push({ type: "set_layer_order", selector: selectorFor(selected), target: fingerprint(selected), layers }, () => {
+      before.forEach(item => { if (item.style === null) item.el.removeAttribute("style"); else item.el.setAttribute("style", item.style); });
+      placeBox("#tinkr-selected", selected); pushPanelState();
+    }, () => {
+      layers.forEach(layer => { const node = TC().resolvePatchTarget(layer, document); if (node) Object.assign(node.style, layer.styles); });
+      placeBox("#tinkr-selected", selected); pushPanelState();
+    });
+    status(message);
+  }
+
+  function proxyForSource(source) {
+    const selector = selectorFor(source);
+    return state.visualLayers.find(layer => layer.source?.selector === selector) || null;
+  }
+
+  function createVisualProxyFor(source) {
+    const existing = proxyForSource(source); if (existing) return existing;
+    const rect = source.getBoundingClientRect();
+    const clone = sanitizedClone(source); clone.removeAttribute("id"); clone.setAttribute("aria-hidden", "true");
+    clone.querySelectorAll("[id]").forEach(node => node.removeAttribute("id"));
+    copyVisualStyles(source, clone);
+    const before = snapshot(source);
+    const layer = { id: crypto.randomUUID(), source: fingerprint(source), sourceBefore: before, html: clone.outerHTML, x: Math.round(rect.left + window.scrollX), y: Math.round(rect.top + window.scrollY), width: Math.round(rect.width), height: Math.round(rect.height), zIndex: nextZ(), createdAt: new Date().toISOString() };
+    source.style.opacity = "0"; source.style.pointerEvents = "none";
+    state.visualLayers.push(layer); renderVisualLayers();
+    push({ type: "create_proxy", selector: selectorFor(source), target: fingerprint(source), proxy: layer }, () => { state.visualLayers = state.visualLayers.filter(item => item.id !== layer.id); restore(source, before); renderVisualLayers(); }, () => { source.style.opacity = "0"; source.style.pointerEvents = "none"; state.visualLayers.push(layer); renderVisualLayers(); });
+    return layer;
+  }
+
+  function commitProxyOrder(selected, direction, target = null) {
+    const before = state.visualLayers.map(layer => ({ id: layer.id, zIndex: layer.zIndex }));
+    const ordered = [...state.visualLayers].sort((a, b) => Number(a.zIndex) - Number(b.zIndex));
+    const current = ordered.indexOf(selected); if (current < 0) return;
+    ordered.splice(current, 1);
+    let next = ordered.length;
+    if (direction === "back") next = 0;
+    if (direction === "forward") next = Math.min(ordered.length, current + 1);
+    if (direction === "backward") next = Math.max(0, current - 1);
+    if (target) { const targetIndex = ordered.indexOf(target); next = direction === "below" ? targetIndex : targetIndex + 1; }
+    ordered.splice(Math.max(0, next), 0, selected);
+    ordered.forEach((layer, index) => { layer.zIndex = 1000 + index; });
+    const layers = ordered.map(layer => ({ id: layer.id, zIndex: layer.zIndex }));
     renderVisualLayers();
-    push({ type: "update_proxy", proxyId: layer.id, before, after: { ...layer } }, () => { Object.assign(layer, before); renderVisualLayers(); pushPanelState(); }, () => { renderVisualLayers(); pushPanelState(); });
+    push({ type: "update_proxy", proxyId: selected.id, layers }, () => { before.forEach(item => { const layer = state.visualLayers.find(x => x.id === item.id); if (layer) layer.zIndex = item.zIndex; }); renderVisualLayers(); pushPanelState(); }, () => { layers.forEach(item => { const layer = state.visualLayers.find(x => x.id === item.id); if (layer) layer.zIndex = item.zIndex; }); renderVisualLayers(); pushPanelState(); });
+  }
+
+  function arrangeElement(el, direction, target = null) {
+    if (!el) return status("Select a layer first.");
+    if (target && !canShareStackGroup(el, target)) {
+      const selectedProxy = createVisualProxyFor(el);
+      const targetProxy = createVisualProxyFor(target);
+      state.selected = null; state.selectedProxyId = selectedProxy.id;
+      commitProxyOrder(selectedProxy, direction, targetProxy);
+      status("Created visual copies to layer across page contexts.");
+      return;
+    }
+    const order = stackSiblings(el).sort((a, b) => (Number(getComputedStyle(a).zIndex) || 0) - (Number(getComputedStyle(b).zIndex) || 0));
+    const current = order.indexOf(el); if (current < 0) return status("This layer cannot be arranged here.");
+    order.splice(current, 1);
+    let next = order.length;
+    if (direction === "back") next = 0;
+    if (direction === "forward") next = Math.min(order.length, current + 1);
+    if (direction === "backward") next = Math.max(0, current - 1);
+    if (target) { const targetIndex = order.indexOf(target); next = direction === "below" ? targetIndex : targetIndex + 1; }
+    order.splice(Math.max(0, next), 0, el);
+    commitDomOrder(order, el, `Layer moved ${direction === "front" ? "to front" : direction === "back" ? "to back" : direction}.`);
+  }
+
+  function arrangeProxy(layer, direction, target = null) {
+    if (!layer) return status("Select a visual copy first.");
+    commitProxyOrder(layer, direction, target);
     status(`Visual copy moved ${direction}.`);
   }
 
-  function arrangeSelected(direction) {
+  function arrangeSelected(direction, target = null) {
     const proxy = selectedProxy();
-    if (proxy) return arrangeProxy(proxy, direction);
+    if (proxy) {
+      const targetProxy = target ? createVisualProxyFor(target) : null;
+      return arrangeProxy(proxy, direction, targetProxy);
+    }
     if (!state.selected) return status("Select a layer first.");
-    const target = (direction === "above" || direction === "below") ? state.hover : null;
-    if ((direction === "above" || direction === "below") && (!target || target === state.selected)) return status("Hover a target layer, then choose place above or below.");
+    if ((direction === "above" || direction === "below") && !target) {
+      state.layerPick = direction;
+      status(`Click a target layer on the page to place ${direction}.`);
+      pushPanelState();
+      return;
+    }
     arrangeElement(state.selected, direction, target);
   }
 
@@ -763,7 +853,7 @@
     const t = state.tokens;
     const content = {
       cta: `<section style="padding:32px;background:${t["--tinkr-surface"]};color:${t["--tinkr-text"]};border-radius:${t["--tinkr-radius"]};text-align:center"><h2 style="margin:0 0 8px;font-size:28px">Ready to build something better?</h2><p style="margin:0 0 18px;color:${t["--tinkr-muted"]}">Turn inspiration into a launch-ready concept.</p><button style="background:${t["--tinkr-primary"]};border:0;border-radius:8px;padding:11px 16px;font-weight:700">Join the waitlist</button></section>`,
-      testimonial: `<blockquote style="margin:0;padding:24px;border:1px solid #d9dce3;border-radius:${t["--tinkr-radius"]};background:#fff"><p style="font-size:18px;margin:0 0 14px">"Tinkr got us from inspiration to a real concept in minutes."</p><footer style="font-size:13px;color:#61646d">Maya Chen · Founder</footer></blockquote>`,
+      testimonial: `<blockquote style="margin:0;padding:24px;border:1px solid #d9dce3;border-radius:${t["--tinkr-radius"]};background:#fff"><p style="font-size:18px;margin:0 0 14px">"tinkr got us from inspiration to a real concept in minutes."</p><footer style="font-size:13px;color:#61646d">Maya Chen · Founder</footer></blockquote>`,
       feature: `<article style="padding:22px;border:1px solid #d9dce3;border-radius:${t["--tinkr-radius"]};background:#fff"><div style="font-size:24px">✦</div><h3 style="margin:10px 0 6px">Make it yours</h3><p style="margin:0;color:#626672">Start with the page you see, then explore freely.</p></article>`,
       wireframe: `<div data-tinkr-wireframe="true" style="min-height:240px;border:2px dashed #7ce9ff;border-radius:${t["--tinkr-radius"]};background:#7ce9ff12;padding:${t["--tinkr-gap"]};display:grid;place-items:center;color:#7ce9ff;font:600 14px Inter,sans-serif">Wireframe frame</div>`
     };
@@ -943,15 +1033,31 @@
     status(`Saved locally · ${state.patches.length} patches.`);
   }
 
+  async function refreshAuthState(triggerSync = false) {
+    const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
+    state.signedIn = auth?.signedIn;
+    if (state.active) {
+      status(state.signedIn ? "Design Mode · cloud sync enabled." : "Design Mode · local only until sign-in.");
+    }
+    pushPanelState();
+    if (triggerSync && state.active && state.signedIn) {
+      clearTimeout(state.cloudSyncTimer);
+      state.cloudSyncTimer = setTimeout(syncCloud, 300);
+    }
+  }
+
   async function syncCloud() {
     try {
       const auth = await chrome.runtime.sendMessage({ type: "TINKR_GET_AUTH" });
       state.signedIn = auth?.signedIn;
-      if (!state.signedIn) return;
+      if (!state.signedIn) {
+        status("Local only — sign in from the side panel to sync.");
+        return;
+      }
       const body = { current_draft: draftPayload(), canvas_meta: { sections: state.sections, viewportState: state.viewport }, sourceUrl: location.href, fingerprint: { pathname: location.pathname, title: document.title } };
       if (state.projectId) {
         const result = await api(`/api/projects/${state.projectId}`, "PATCH", body);
-        if (result?.ok) status("Synced to Tinkr Cloud.");
+        if (result?.ok) status("Synced to tinkr.");
         else if (result) status(`Cloud sync failed: ${result.data?.error || "unknown"}`);
         return;
       }
@@ -961,9 +1067,11 @@
         await chrome.storage.local.set({ [storageKey()]: { ...draftPayload(), projectId: state.projectId, updatedAt: new Date().toISOString() } });
         chrome.runtime.sendMessage({ type: "TINKR_REALTIME_JOIN", projectId: state.projectId });
         status("Created cloud project and synced.");
+      } else if (created) {
+        status(`Cloud sync failed: ${created.data?.error || "could not create project"}`);
       }
-    } catch {
-      /* API offline — local edits still saved */
+    } catch (error) {
+      status(`Cloud sync failed: ${error?.message || "API unreachable — is the tinkr server running?"}`);
     }
   }
 
@@ -1269,6 +1377,7 @@
     if (cmd === "createVariable") { createVariable(payload); return getPanelState(); }
     if (cmd === "applyVariable") { applyVariable(payload.id); return getPanelState(); }
     if (cmd === "selectProxy") { selectProxy(payload.id); return getPanelState(); }
+    if (cmd === "selectVector") { selectVector(payload.id); return getPanelState(); }
     if (cmd === "setMoveMode") { state.moveMode = payload.mode === "structural" ? "structural" : "visual"; status(state.moveMode === "visual" ? "Visual canvas mode enabled." : "Structural reorder mode enabled."); return getPanelState(); }
     if (cmd === "openAssetPicker") { insertImageFromPicker(); return getPanelState(); }
     if (cmd === "insertAssetById") { const asset = state.assets.find(a => a.id === payload.id); if (asset) { const layer = TC().createShape("image", window.scrollX + 80, window.scrollY + 80, 240, 160, { href: asset.href }); state.vectorLayers.push(layer); push({ type: "insert_vector", vector: layer }, () => { state.vectorLayers = state.vectorLayers.filter(v => v.id !== layer.id); renderVectorLayer(); }); renderVectorLayer(); selectVector(layer.id); queueSave(); } return getPanelState(); }
@@ -1288,6 +1397,16 @@
   }
 
   function startDrag(event) {
+    // Placement picking is a click-only interaction.  It must run before the
+    // regular selection pipeline, otherwise select() clears layerPick on the
+    // pointer down that is meant to choose the target layer.
+    if (state.layerPick && event.button === 0 && !isToolbarTarget(event.target)) {
+      const target = pageElementAt(event.clientX, event.clientY);
+      if (target && !isTinkr(target) && target !== state.selected) {
+        event.preventDefault();
+        return;
+      }
+    }
     const proxy = event.target?.closest?.("[data-tinkr-proxy-id]");
     if (proxy && event.button === 0 && TC().shouldSelectElements(state.tool)) {
       const layer = state.visualLayers.find(item => item.id === proxy.dataset.tinkrProxyId);
@@ -1480,8 +1599,11 @@
     const moved = Math.hypot(event.clientX - d.x, event.clientY - d.y) > 3;
     if (moved) {
       state.suppressClick = true;
-      if (d.dropTarget && d.dropTarget !== d.el) d.el.style.zIndex = String((Number(getComputedStyle(d.dropTarget).zIndex) || 0) + 1);
       push({ type: "move_layer", selector: selectorFor(d.el), target: fingerprint(d.el), before: { style: d.before.style }, after: { styles: { position: d.el.style.position, translate: d.el.style.translate, zIndex: d.el.style.zIndex } } }, () => restore(d.el, d.before));
+      // Every overlap drop goes through the same normalized Arrange engine as
+      // the inspector commands. This avoids z-index:auto arithmetic and
+      // promotes cross-context targets to visual copies when necessary.
+      if (d.dropTarget && d.dropTarget !== d.el) arrangeElement(d.el, "above", d.dropTarget);
     } else restore(d.el, d.before);
     state.root?.querySelector("#tinkr-layer-target")?.classList.add("tinkr-hide");
     state.drag = null; releasePointer(event);
@@ -1493,6 +1615,8 @@
     const el = pageElementAt(event.clientX, event.clientY);
     updateCursor(event, el);
     if (el && !isTinkr(el)) {
+      if (state.layerPick && el !== state.selected) showLayerTarget(el);
+      else if (state.layerPick) showLayerTarget(null);
       if (!state.drag && !state.tool.devMode && TC().shouldSelectElements(state.tool) && el !== state.hover) {
         state.hover = el; placeBox("#tinkr-hover", el);
       } else if (state.tool.devMode && el !== state.hover) {
@@ -1505,6 +1629,16 @@
 
   function onClick(event) {
     if (!state.active || isToolbarTarget(event.target)) return;
+    if (state.layerPick && (state.selected || selectedProxy())) {
+      const hit = pageElementAt(event.clientX, event.clientY);
+      if (hit && !isTinkr(hit) && hit !== state.selected) {
+        event.preventDefault(); event.stopPropagation();
+        arrangeSelected(state.layerPick, hit);
+        clearLayerPick();
+        pushPanelState();
+        return;
+      }
+    }
     const proxy = event.target?.closest?.("[data-tinkr-proxy-id]");
     if (proxy) { selectProxy(proxy.dataset.tinkrProxyId); event.preventDefault(); event.stopPropagation(); return; }
     if (state.suppressClick) { state.suppressClick = false; return; }
@@ -1532,6 +1666,7 @@
   function onKey(event) {
     if (!state.active) return;
     if (event.key === "Escape") {
+      if (state.layerPick) { clearLayerPick(); status("Layer placement cancelled."); return; }
       if (state.drag) {
         const drag = state.drag;
         if (drag.kind === "proxy") { Object.assign(drag.layer, drag.before); renderVisualLayers(); }
@@ -1725,6 +1860,17 @@
       state.presence = message.event.state || [];
       renderPresence();
       return;
+    }
+    if (message.type === "TINKR_AUTH_CHANGED") {
+      (async () => {
+        try {
+          await refreshAuthState(true);
+          sendResponse({ ok: true });
+        } catch (error) {
+          sendResponse({ ok: false, error: error?.message || "Auth refresh failed" });
+        }
+      })();
+      return true;
     }
     if (message.type === "TINKR_TOGGLE" || message.type === "TINKR_GET_STATE" || message.type === "TINKR_CMD") {
       (async () => {

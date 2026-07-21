@@ -1,0 +1,11 @@
+{
+  "name": "tinkr-demo-scripts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@napi-rs/canvas": "^1.0.2",
+    "@supabase/supabase-js": "^2.50.0",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.52.0"
+  }
+}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { buildTinkrLaunchUrl } from "@/lib/projects";
 import { FloatingToolbar } from "./FloatingToolbar";
 
 type Project = {
@@ -87,8 +88,8 @@ export function CanvasEditor({ project, token }: { project: Project; token: stri
       <div style={viewport}>
         {blocked && (
           <div style={fallback}>
-            <p>This site blocks iframe embedding. Open in the Chrome extension for full editing.</p>
-            <a href={`${project.source_url}?tinkr_project=${project.id}`}>Open in Tinkr extension</a>
+            <p>This site blocks iframe embedding. Open it in the Chrome extension for full editing.</p>
+            <a href={buildTinkrLaunchUrl(project.source_url, project.id)}>Open in tinkr</a>
           </div>
         )}
         <iframe ref={iframeRef} src={project.source_url} style={iframe} title="Canvas" sandbox="allow-scripts allow-same-origin allow-forms" />

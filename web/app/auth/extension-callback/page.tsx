@@ -23,17 +23,19 @@ export default function ExtensionCallbackPage() {
           refresh_token: session.refresh_token,
           expires_at: session.expires_at,
           user: { id: session.user.id, email: session.user.email, name: session.user.user_metadata?.full_name || session.user.email }
-        }
+        },
+        supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+        anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
       };
       const chromeApi = (window as unknown as { chrome?: { runtime?: { sendMessage: (id: string, msg: unknown, cb?: (r: unknown) => void) => void; lastError?: { message?: string } } } }).chrome;
       if (extId && chromeApi?.runtime?.sendMessage) {
         chromeApi.runtime.sendMessage(extId, payload, (response) => {
-          if (chromeApi.runtime?.lastError) setStatus(`Extension handshake failed: ${chromeApi.runtime.lastError.message}. Open the Tinkr side panel and try again.`);
-          else if ((response as { ok?: boolean })?.ok) setStatus("You're signed in. Open the Tinkr side panel from the Chrome toolbar.");
+          if (chromeApi.runtime?.lastError) setStatus(`Extension handshake failed: ${chromeApi.runtime.lastError.message}. Open the tinkr side panel and try again.`);
+          else if ((response as { ok?: boolean })?.ok) setStatus("You're signed in. Open the tinkr side panel from the Chrome toolbar.");
           else setStatus("Extension did not confirm sign-in. Reload the extension and try again.");
         });
       } else {
-        setStatus("Signed in to Tinkr Cloud. Click the Tinkr icon to open the side panel.");
+        setStatus("Signed in to tinkr. Click the tinkr icon to open the side panel.");
       }
     })();
   }, []);
