@@ -50,6 +50,8 @@ NEXT_PUBLIC_TINKR_GITHUB_REPO=https://github.com/hatif03/tinkr/releases/latest
 
 Set `NEXT_PUBLIC_TINKR_EXTENSION_ID` after packing the extension (see below).
 
+Current beta extension ID: `jjmlbmeelpjcankgidennhlddlfefkgk`
+
 ## Pack and release extension
 
 ```bash
