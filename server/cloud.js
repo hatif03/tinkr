@@ -1,7 +1,10 @@
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 
-const configured = () => Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_PUBLISHABLE_KEY);
+// Every authenticated project route uses the service client for a scoped
+// membership check. Treat a missing service key as an explicit configuration
+// problem instead of letting it surface later as an opaque 500.
+const configured = () => Boolean(process.env.SUPABASE_URL && process.env.SUPABASE_PUBLISHABLE_KEY && process.env.SUPABASE_SERVICE_ROLE_KEY);
 const publicClient = (accessToken) => createClient(process.env.SUPABASE_URL, process.env.SUPABASE_PUBLISHABLE_KEY, {
   global: { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} },
   auth: { persistSession: false, autoRefreshToken: false }
@@ -12,23 +15,53 @@ const serviceClient = () => {
 };
 const tokenHash = (token) => crypto.createHash("sha256").update(token).digest("hex");
 const bearer = (request) => request.headers.authorization?.replace(/^Bearer\s+/i, "");
+const ASSET_BUCKET = "tinkr-assets";
+const MAX_ASSET_BYTES = 8 * 1024 * 1024;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function assetUploadInput(body = {}) {
+  const assetId = String(body.assetId || "");
+  const mimeType = String(body.mimeType || "").toLowerCase().trim();
+  const byteSize = Number(body.byteSize || 0);
+  if (!UUID_PATTERN.test(assetId)) return { error: "A valid asset identifier is required.", code: "ASSET_UPLOAD_INVALID" };
+  if (!mimeType.startsWith("image/")) return { error: "Only image assets can be uploaded to the tinkr canvas.", code: "ASSET_TYPE_UNSUPPORTED" };
+  if (!Number.isFinite(byteSize) || byteSize < 0 || byteSize > MAX_ASSET_BYTES) return { error: "Image assets must be 8 MB or smaller.", code: "ASSET_TOO_LARGE" };
+  return { assetId, mimeType, byteSize };
+}
+
+function assetStoragePath(userId, projectId, assetId) {
+  return `${userId}/${projectId}/${assetId}`;
+}
+
+async function signedAssetUrl(db, path) {
+  const { data, error } = await db.storage.from(ASSET_BUCKET).createSignedUrl(path, 3600);
+  if (error) return { error: error.message };
+  return { url: data.signedUrl, expiresAt: new Date(Date.now() + 3600 * 1000).toISOString() };
+}
 
 async function requireUser(req, res) {
-  if (!configured()) { res.status(503).json({ error: "Supabase is not configured." }); return null; }
+  if (!configured()) { res.status(503).json({ error: "tinkr Cloud is not configured.", code: "CLOUD_NOT_CONFIGURED", retryable: false }); return null; }
   const token = bearer(req);
-  if (!token) { res.status(401).json({ error: "Sign in is required." }); return null; }
+  if (!token) { res.status(401).json({ error: "Sign in is required.", code: "AUTH_REQUIRED", retryable: false }); return null; }
   const { data: { user }, error } = await publicClient().auth.getUser(token);
-  if (error || !user) { res.status(401).json({ error: "Sign in is required." }); return null; }
+  if (error || !user) { res.status(401).json({ error: "Sign in is required.", code: "AUTH_REQUIRED", retryable: false }); return null; }
   return { client: publicClient(token), db: serviceClient(), user, token };
 }
 
 async function canAccessProject(db, userId, projectId) {
   const { data: project } = await db.from("projects").select("id, owner_id").eq("id", projectId).maybeSingle();
   if (!project) return null;
-  if (project.owner_id === userId) return project;
-  const { data: member } = await db.from("project_members").select("project_id").eq("project_id", projectId).eq("user_id", userId).maybeSingle();
-  return member ? project : null;
+  if (project.owner_id === userId) return { ...project, role: "owner" };
+  const { data: member } = await db.from("project_members").select("project_id,role").eq("project_id", projectId).eq("user_id", userId).maybeSingle();
+  return member ? { ...project, role: member.role || "viewer" } : null;
 }
+
+const canEditProject = (access) => Boolean(access && ["owner", "editor"].includes(access.role));
+const canCommentOnProject = (access) => Boolean(access && ["owner", "editor", "commenter"].includes(access.role));
+function editorRequired(res) {
+  res.status(403).json({ error: "Editor access is required to change this project.", code: "EDITOR_REQUIRED" });
+}
+const isMissingAtomicUpdateFunction = (error) => ["PGRST202", "42883"].includes(String(error?.code || ""));
 
 async function listProjectsForUser(db, userId) {
   const [{ data: owned, error: ownedError }, { data: memberships, error: memberError }] = await Promise.all([
@@ -134,12 +167,60 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canEditProject(access)) return editorRequired(res);
     const patch = { updated_at: new Date().toISOString() };
     if (req.body?.name) patch.name = String(req.body.name).slice(0, 120);
     if (req.body?.current_draft !== undefined || req.body?.patches !== undefined || req.body?.draft !== undefined) patch.current_draft = draftPayload(req.body);
     if (req.body?.canvas_meta !== undefined) patch.canvas_meta = req.body.canvas_meta;
     if (req.body?.preview_path) patch.preview_path = req.body.preview_path;
     if (req.body?.starred !== undefined) patch.starred = Boolean(req.body.starred);
+
+    const suppliedBaseVersion = req.body?.base_version;
+    const hasBaseVersion = suppliedBaseVersion !== undefined && suppliedBaseVersion !== null && suppliedBaseVersion !== "";
+    const requestedBaseVersion = Number(suppliedBaseVersion);
+    if (hasBaseVersion && (!Number.isSafeInteger(requestedBaseVersion) || requestedBaseVersion < 0)) {
+      return res.status(400).json({ error: "base_version must be a non-negative integer.", code: "INVALID_BASE_VERSION" });
+    }
+
+    // The extension includes a base version for every draft save. Perform that
+    // comparison inside Postgres, rather than SELECTing then UPDATEing here:
+    // two requests can otherwise both observe the same version and the latter
+    // silently overwrites the former.
+    if (hasBaseVersion) {
+      const { data: result, error } = await auth.client
+        .rpc("tinkr_update_project_if_version", {
+          p_project_id: req.params.projectId,
+          p_base_version: requestedBaseVersion,
+          p_patch: patch
+        })
+        .maybeSingle();
+
+      if (error) {
+        if (isMissingAtomicUpdateFunction(error)) {
+          return res.status(503).json({
+            error: "tinkr Cloud needs the latest project-save migration before versioned drafts can sync.",
+            code: "CLOUD_MIGRATION_REQUIRED",
+            retryable: false
+          });
+        }
+        return res.status(400).json({ error: error.message });
+      }
+
+      if (!result || result.outcome === "not_found") return res.status(404).json({ error: "Project not found." });
+      if (result.outcome === "forbidden") return editorRequired(res);
+      if (result.outcome === "conflict") {
+        return res.status(409).json({
+          error: "This project changed in another tinkr session. Review or reopen it before overwriting newer work.",
+          code: "CONFLICT",
+          current_version: Number(result.current_version || 0)
+        });
+      }
+      if (result.outcome !== "updated" || !result.project) {
+        return res.status(400).json({ error: "tinkr Cloud could not apply this project update.", code: "PROJECT_UPDATE_FAILED" });
+      }
+      return res.json({ project: result.project });
+    }
+
     const { data, error } = await auth.db.from("projects").update(patch).eq("id", req.params.projectId).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ project: data });
@@ -150,6 +231,7 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canEditProject(access)) return editorRequired(res);
     const { data, error } = await auth.db.from("projects").update({ starred: Boolean(req.body?.starred), updated_at: new Date().toISOString() }).eq("id", req.params.projectId).select("id,starred").single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ project: data });
@@ -193,6 +275,7 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canEditProject(access)) return editorRequired(res);
     const draft = draftPayload(req.body);
     const row = {
       project_id: req.params.projectId,
@@ -224,6 +307,7 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canCommentOnProject(access)) return res.status(403).json({ error: "Commenter access is required to add a comment.", code: "COMMENTER_REQUIRED" });
     const row = {
       project_id: req.params.projectId,
       revision_id: req.body?.revisionId || null,
@@ -242,11 +326,12 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canCommentOnProject(access)) return res.status(403).json({ error: "Commenter access is required to change a comment.", code: "COMMENTER_REQUIRED" });
     const patch = {};
     if (req.body?.resolved === true) patch.resolved_at = new Date().toISOString();
     if (req.body?.resolved === false) patch.resolved_at = null;
     if (req.body?.body) patch.body = String(req.body.body).trim();
-    const { data, error } = await auth.db.from("comments").update(patch).eq("id", req.params.commentId).select().single();
+    const { data, error } = await auth.db.from("comments").update(patch).eq("id", req.params.commentId).eq("project_id", req.params.projectId).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json({ comment: data });
   });
@@ -285,11 +370,11 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
-    const { data: asset, error } = await auth.db.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
+    const { data: asset, error } = await auth.db.from("assets").select("id,storage_path,mime_type,byte_size,created_at").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
     if (error || !asset) return res.status(404).json({ error: "Asset not found." });
-    const { data, error: urlError } = await auth.db.storage.from("tinkr-assets").createSignedUrl(asset.storage_path, 3600);
-    if (urlError) return res.status(400).json({ error: urlError.message });
-    res.json({ url: data.signedUrl });
+    const signed = await signedAssetUrl(auth.db, asset.storage_path);
+    if (signed.error) return res.status(400).json({ error: signed.error, code: "ASSET_URL_FAILED" });
+    res.json({ asset, ...signed });
   });
 
   app.delete("/api/projects/:projectId/assets/:assetId", async (req, res) => {
@@ -297,8 +382,9 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canEditProject(access)) return editorRequired(res);
     const { data: asset } = await auth.db.from("assets").select("storage_path").eq("id", req.params.assetId).eq("project_id", req.params.projectId).single();
-    if (asset?.storage_path) await auth.db.storage.from("tinkr-assets").remove([asset.storage_path]);
+    if (asset?.storage_path) await auth.db.storage.from(ASSET_BUCKET).remove([asset.storage_path]);
     const { error } = await auth.db.from("assets").delete().eq("id", req.params.assetId);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ ok: true });
@@ -309,12 +395,63 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
-    const mime = String(req.body?.mimeType || "image/png");
-    const path = `${auth.user.id}/${req.params.projectId}/${crypto.randomUUID()}`;
-    const { data, error } = await auth.db.storage.from("tinkr-assets").createSignedUploadUrl(path);
-    if (error) return res.status(400).json({ error: error.message });
-    await auth.db.from("assets").insert({ project_id: req.params.projectId, uploader_id: auth.user.id, storage_path: path, mime_type: mime, byte_size: Number(req.body?.byteSize || 0) });
-    res.json({ uploadUrl: data.signedUrl, path, token: data.token });
+    if (!canEditProject(access)) return editorRequired(res);
+    const input = assetUploadInput(req.body);
+    if (input.error) return res.status(400).json({ error: input.error, code: input.code, retryable: false });
+    const path = assetStoragePath(auth.user.id, req.params.projectId, input.assetId);
+    const { data, error } = await auth.db.storage.from(ASSET_BUCKET).createSignedUploadUrl(path, { upsert: true });
+    if (error) return res.status(400).json({ error: error.message, code: "ASSET_UPLOAD_URL_FAILED" });
+    // Do not create an assets row until the signed upload has actually
+    // completed. This keeps a failed/offline upload from becoming a broken
+    // cloud asset and makes completion idempotent for a retried message.
+    res.json({ assetId: input.assetId, uploadUrl: data.signedUrl, path });
+  });
+
+  app.post("/api/projects/:projectId/assets/complete", async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canEditProject(access)) return editorRequired(res);
+    const input = assetUploadInput(req.body);
+    if (input.error) return res.status(400).json({ error: input.error, code: input.code, retryable: false });
+
+    const path = assetStoragePath(auth.user.id, req.params.projectId, input.assetId);
+    if (req.body?.path && String(req.body.path) !== path) {
+      return res.status(400).json({ error: "That asset does not belong to this project.", code: "ASSET_PATH_INVALID", retryable: false });
+    }
+    const folder = `${auth.user.id}/${req.params.projectId}`;
+    const { data: objects, error: listError } = await auth.db.storage.from(ASSET_BUCKET).list(folder, { limit: 100, search: input.assetId });
+    if (listError) return res.status(400).json({ error: listError.message, code: "ASSET_LOOKUP_FAILED" });
+    const object = (objects || []).find(item => item.name === input.assetId);
+    if (!object) {
+      return res.status(409).json({ error: "The asset upload has not completed yet. Keep the local copy and try again.", code: "ASSET_UPLOAD_PENDING", retryable: true });
+    }
+
+    const { data: existing, error: existingError } = await auth.db.from("assets").select("id,storage_path,mime_type,byte_size,created_at").eq("id", input.assetId).eq("project_id", req.params.projectId).maybeSingle();
+    if (existingError) return res.status(400).json({ error: existingError.message, code: "ASSET_LOOKUP_FAILED" });
+    let asset = existing;
+    if (!asset) {
+      const storedSize = Number(object.metadata?.size);
+      const storedMime = String(object.metadata?.mimetype || input.mimeType).toLowerCase();
+      const { data, error } = await auth.db.from("assets").insert({
+        id: input.assetId,
+        project_id: req.params.projectId,
+        uploader_id: auth.user.id,
+        storage_path: path,
+        mime_type: storedMime.startsWith("image/") ? storedMime : input.mimeType,
+        byte_size: Number.isFinite(storedSize) && storedSize >= 0 ? storedSize : input.byteSize
+      }).select("id,storage_path,mime_type,byte_size,created_at").single();
+      if (error) {
+        // The object is private and user-scoped. Leave it intact on a transient
+        // database failure so the same completion request can safely retry.
+        return res.status(400).json({ error: error.message, code: "ASSET_REGISTER_FAILED", retryable: true });
+      }
+      asset = data;
+    }
+    const signed = await signedAssetUrl(auth.db, asset.storage_path);
+    if (signed.error) return res.status(400).json({ error: signed.error, code: "ASSET_URL_FAILED" });
+    res.status(existing ? 200 : 201).json({ asset, ...signed });
   });
 
   app.post("/api/projects/:projectId/share", async (req, res) => {
@@ -322,6 +459,7 @@ export function mountCloudRoutes(app) {
     if (!auth) return;
     const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
     if (!access) return res.status(404).json({ error: "Project not found." });
+    if (!canEditProject(access)) return editorRequired(res);
     const token = crypto.randomBytes(32).toString("base64url");
     const row = { project_id: req.params.projectId, revision_id: req.body?.revisionId, created_by: auth.user.id, token_hash: tokenHash(token), expires_at: req.body?.expiresAt || null };
     const { error } = await auth.db.from("share_links").insert(row);
@@ -342,6 +480,8 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/realtime", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     res.json({
       supabaseUrl: process.env.SUPABASE_URL,
       anonKey: process.env.SUPABASE_PUBLISHABLE_KEY,
@@ -353,6 +493,8 @@ export function mountCloudRoutes(app) {
   app.post("/api/projects/:projectId/presence", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     setPresence(req.params.projectId, auth.user.id, {
       email: auth.user.email,
       cursor: req.body?.cursor || null,
@@ -365,6 +507,8 @@ export function mountCloudRoutes(app) {
   app.get("/api/projects/:projectId/presence", async (req, res) => {
     const auth = await requireUser(req, res);
     if (!auth) return;
+    const access = await canAccessProject(auth.db, auth.user.id, req.params.projectId);
+    if (!access) return res.status(404).json({ error: "Project not found." });
     res.json({ presence: getPresence(req.params.projectId) });
   });
 }
